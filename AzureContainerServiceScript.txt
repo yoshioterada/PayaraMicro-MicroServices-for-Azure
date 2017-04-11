@@ -1,0 +1,356 @@
+Docker Registry Login
+************************************************************
+HostName：yoshio.azurecr.io
+User Name：yoshio
+Password：=****==******=yQWsXU16lytROHfMwm
+
+Example of Dockerfile
+************************************************************
+FROM java:8-jdk-alpine
+MAINTAINER Yoshio Terada
+
+VOLUME /tmp
+
+ADD ./target/FaceEmotionUI-MSA-1.0-SNAPSHOT.jar /app.jar
+RUN sh -c 'touch /app.jar'
+ENV JAVA_OPTS=""
+
+RUN chmod 755 /app.jar
+EXPOSE 8080
+ENTRYPOINT java -jar app.jar
+************************************************************
+
+Docker Build to Push → Azure Container Registry
+************************************************************
+$ docker build -t tyoshio2002/helloworld:1.0 .
+$ docker tag tyoshio2002/helloworld:1.0 yoshio.azurecr.io/tyoshio2002/helloworld:1.0
+$ docker push yoshio.azurecr.io/tyoshio2002/helloworld
+************************************************************
+
+Create ssh key file to access the Azure ACS
+************************************************************
+$ ssh-keygen 
+Generating public/private rsa key pair.
+Enter file in which to save the key (/Users/tyoshio2002/.ssh/id_rsa): /Users/tyoshio2002/.ssh/azure-cs-dcos
+Enter passphrase (empty for no passphrase): 
+Enter same passphrase again: 
+Your identification has been saved in /Users/tyoshio2002/.ssh/azure-cs-dcos.
+Your public key has been saved in /Users/tyoshio2002/.ssh/azure-cs-dcos.pub.
+The key fingerprint is:
+SHA256:7wJOdCtkYvaZFJmJ93IMC8cPKSFo0229AQH6/njXrF0 yoterada@Yoshio-no-MacBook-Pro.local
+The key's randomart image is:
++---[RSA 2048]----+
+| .o.+*+=         |
+|.o.o+o%o         |
+|... .= Oo        |
+|  . + B.*        |
+|   + B *S.       |
+|  .   B ..       |
+|   . o oo .E     |
+|    o...o+.      |
+|   ......o.      |
++----[SHA256]-----+
+$ ls ~/.ssh/azure-cs-dcos*
+/Users/tyoshio2002/.ssh/azure-cs-dcos		/Users/tyoshio2002/.ssh/azure-cs-dcos.pub
+************************************************************
+
+Login to the DC/OS by using SSH (with -A option to use the ssh-agent)
+************************************************************
+$ ssh -A -l yoterada yoshio3mgmt.japanwest.cloudapp.azure.com
+
+SSH Tunneling and Port forward (WebUI = 80 port number)
+************************************************************
+$ sudo ssh -fNL 80:localhost:80  yoterada@yoshio3mgmt.japanwest.cloudapp.azure.com
+
+
+Showed the Admin Console of Mesos and Marathon
+http://localhost/mesos
+http://localhost/marathon/
+************************************************************
+
+Note for Mac Users : To create Azure Container Service DC/OS
+************************************************************
+https://mesosphere.github.io/marathon/docs/native-docker-private-registry.html
+
+According to the above document, it was wrote that it need to create a “docker.tar.gz”. 
+However during our evaluation, I noticed that the above document must write the NOTE.
+In fact, if user created the “docker.tar.gz” file on Mac OS/X(my machine), the deployment failed.
+Because after the investigation, the created file on Linux and Mac OS/X was difference.
+
+We already report the above issue on following.
+https://blogs.technet.microsoft.com/livedevopsinjapan/2017/03/23/tips-dcos-with-azure-container-registry/
+************************************************************
+
+
+How to deploy your own Docker Image to ACS DC/OS
+************************************************************
+{
+ "id": "/helloworld",
+ "cmd": null,
+ "cpus": 1,
+ "mem": 800,
+ "disk": 0,
+ "instances": 3,
+ "container": {
+   "type": "DOCKER",
+   "volumes": [],
+   "docker": {
+     "image": "yoshio.azurecr.io/tyoshio2002/helloworld:1.9",
+     "network": "BRIDGE",
+     "portMappings": [
+       {
+         "containerPort": 28080,
+         "hostPort": 0,
+         "servicePort": 10000,
+         "protocol": "tcp",
+         "labels": {}
+       }
+     ],
+     "privileged": false,
+     "parameters": [],
+     "forcePullImage": false
+   }
+ },
+ "labels": {
+   "HAPROXY_GROUP": "external",
+   "HAPROXY_0_VHOST": "yoshio3agents.japanwest.cloudapp.azure.com",
+   "HAPROXY_0_MODE": "http"
+ },
+ "portDefinitions": [
+   {
+     "port": 10000,
+     "protocol": "tcp",
+     "labels": {}
+   }
+ ],
+ "uris": [
+   "https://yoshiofileup.blob.core.windows.net/uploaded/docker.tgz"
+ ],
+ "fetch": [
+   {
+     "uri": "https://yoshiofileup.blob.core.windows.net/uploaded/docker.tgz",
+     "extract": true,
+     "executable": false,
+     "cache": false
+   }
+ ]
+}
+************************************************************
+
+
+
+Preparation of Azure Container Service kubernetes (k8s)
+
+Install Azure CLI 2.0 (For Mac)
+************************************************************
+$ curl -L https://aka.ms/InstallAzureCli | bash
+
+Login from Azure CLI 
+************************************************************
+$ az login
+To sign in, use a web browser to open the page https://aka.ms/devicelogin and enter the code ********* to authenticate.
+[
+  {
+    "cloudName": "AzureCloud",
+    "id": “********-****-****-****-d0c37687ef70",
+    "isDefault": true,
+    "name": "Microsoft Azure \u793e\u5185\u5f93\u91cf\u8ab2\u91d1\u30d7\u30e9\u30f3",
+    "state": "Enabled",
+    "tenantId": “********-****-****-****-2d7cd011db47",
+    "user": {
+      "name": “foobar@microsoft.com",
+      "type": "user"
+    }
+  }
+]
+$ az account set --subscription “********-****-****-****-d0c37687ef70"
+************************************************************
+
+
+Create Service Principal and Client Secret for K8S (Input them on the Azure Portal Screen later)
+************************************************************
+$ az ad sp create-for-rbac --role="Contributor" --scopes="/subscriptions/********-****-****-****-d0c37687ef70"
+Retrying role assignment creation: 1/36
+Retrying role assignment creation: 2/36
+{
+  "appId": “********—****-****-05b07d47995a",  <—— Service Principal ID
+  "displayName": "azure-cli-2017-03-26-05-48-18",
+  "name": "http://azure-cli-2017-03-26-05-48-18",
+  "password": “********-****-****-****-bff517bd498a", <—— Client Secret
+  "tenant": “********-****-****-****-2d7cd011db47"
+}
+
+Login to the ACS k8s Master Server(-i specify the private key which created by ssh-keygen)
+************************************************************
+$ ssh yoterada@acs-k8smgmt.japanwest.cloudapp.azure.com -A -i azure-acs-k8s
+
+Confirm the k8s Nodes
+************************************************************
+$ kubectl get nodes
+NAME                   STATUS                     AGE
+k8s-agent-964810d-0    Ready                      7m
+k8s-agent-964810d-1    Ready                      7m
+k8s-agent-964810d-2    Ready                      7m
+k8s-agent-964810d-3    Ready                      7m
+k8s-agent-964810d-4    Ready                      7m
+k8s-master-964810d-0   Ready,SchedulingDisabled   7m
+
+Confirm the k8s version
+************************************************************
+$ kubectl version
+Client Version: version.Info{Major:"1", Minor:"5", GitVersion:"v1.5.3", GitCommit:"029c3a408176b55c30846f0faedf56aae5992e9b", GitTreeState:"clean", BuildDate:"2017-02-15T06:40:50Z", GoVersion:"go1.7.4", Compiler:"gc", Platform:"linux/amd64"}
+Server Version: version.Info{Major:"1", Minor:"5", GitVersion:"v1.5.3", GitCommit:"029c3a408176b55c30846f0faedf56aae5992e9b", GitTreeState:"clean", BuildDate:"2017-02-15T06:34:56Z", GoVersion:"go1.7.4", Compiler:"gc", Platform:"linux/amd64"}
+
+
+Create the Secret Info to access the Container Private Registry from K8S
+************************************************************
+$ kubectl create secret docker-registry regsecret --docker-username=yoshio --docker-password==****==******=yQWsXU16lytROHfMwm --docker-email=foobar@microsoft.com
+secret "regsecret" created
+
+
+Confirm the Secret Info
+************************************************************
+$ kubectl get secret regsecret --output=yaml
+apiVersion: v1
+data:
+  .dockercfg: **************************************************************************************************************************************************************************************************************************************************************************==
+kind: Secret
+metadata:
+  creationTimestamp: 2017-03-26T06:10:03Z
+  name: regsecret
+  namespace: default
+  resourceVersion: "1901"
+  selfLink: /api/v1/namespaces/default/secrets/regsecret
+  uid: ********-****-****-****-000d3a40749c
+type: kubernetes.io/dockercfg
+
+
+Create POD from YAML File
+
+my-private-reg-pod.yaml file
+************************************************************
+apiVersion: v1
+kind: Pod
+metadata:
+  name: helloworld
+spec:
+  containers:
+    - name: helloworld
+      image: yoshio.azurecr.io/tyoshio2002/helloworld:1.9
+      ports:
+        - containerPort: 28080
+  imagePullSecrets:
+    - name: regsecret
+
+k8s Pod の作成
+************************************************************
+$ kubectl create -f my-private-reg-pod.yaml
+pod "private-reg" created
+
+Confirm the POD
+************************************************************
+$ kubectl get pod private-reg
+NAME          READY     STATUS              RESTARTS   AGE
+private-reg   0/1       ContainerCreating   0          3s
+
+K8S Web UI(ダッシュボード) の起動 & 有効化
+************************************************************
+
+Start the Admin Console on WebUI
+************************************************************
+$ kubectl proxy
+
+SSH tunneling and port forwarding (WebUI = 8001 port)
+************************************************************
+$ ssh -fNL 8001:localhost:8001 yoterada@acs-k8smgmt.japanwest.cloudapp.azure.com -A -i azure-acs-k8s
+
+
+Access to the Admin Console of k8s as follows
+http://localhost:8001/ui
+
+
+Confirm the deployment (3 Microservices deployed)
+************************************************************
+$ kubectl get deployment
+NAME            DESIRED   CURRENT   UP-TO-DATE   AVAILABLE   AGE
+emotiondetect   1         1         1            1           18m
+facedetect      1         1         1            1           26m
+javabot         1         1         1            1           14m
+
+
+Pod Scale out the service by using “—-replicas” option.
+************************************************************
+$ kubectl scale deployment emotiondetect --replicas=2 <—— レプリカ数を 2 へ
+deployment "emotiondetect" scaled
+
+Confirm again the status of the deployment
+************************************************************
+$ kubectl get deployment
+NAME            DESIRED   CURRENT   UP-TO-DATE   AVAILABLE   AGE
+emotiondetect   2         2         2            1           18m
+facedetect      1         1         1            1           26m
+javabot         1         1         1            1           14m
+yote
+
+
+VM Scale out from GUI and CLI
+
+
+VM Scale Out from Azure CLI 
+************************************************************
+$ az acs scale -n containerservice-ACS-K8S-cluster  -g ACS-K8S-cluster --new-agent-count 10
+{
+  "agentPoolProfiles": [
+    {
+      "count": 10,
+      "dnsPrefix": "acs-k8sagents",
+      "fqdn": "",
+      "name": "agentpool",
+      "vmSize": "Standard_DS2"
+    }
+  ],
+  "customProfile": null,
+  "diagnosticsProfile": {
+    "vmDiagnostics": {
+      "enabled": false,
+      "storageUri": null
+    }
+  },
+  "id": "/subscriptions/********-****-****-bd9c-d0c37687ef70/resourceGroups/ACS-K8S-cluster/providers/Microsoft.ContainerService/containerServices/containerservice-ACS-K8S-cluster",
+  "linuxProfile": {
+    "adminUsername": "yoterada",
+    "ssh": {
+      "publicKeys": [
+        {
+          "keyData": "ssh-rsa **********************************/*******************************************************************/
+***************************************************************/************************************
++********************************************/**********************************/
+***************************************************************************+***********"
+        }
+      ]
+    }
+  },
+  "location": "japanwest",
+  "masterProfile": {
+    "count": 1,
+    "dnsPrefix": "acs-k8smgmt",
+    "fqdn": "acs-k8smgmt.japanwest.cloudapp.azure.com"
+  },
+  "name": "containerservice-ACS-K8S-cluster",
+  "orchestratorProfile": {
+    "orchestratorType": "Kubernetes"
+  },
+  "provisioningState": "Succeeded",
+  "resourceGroup": "ACS-K8S-cluster",
+  "servicePrincipalProfile": {
+    "clientId": “********-****-****-aa86-05b07d47995a",
+    "secret": null
+  },
+  "tags": null,
+  "type": "Microsoft.ContainerService/ContainerServices",
+  "windowsProfile": null
+}
+$ 
+
+
+
