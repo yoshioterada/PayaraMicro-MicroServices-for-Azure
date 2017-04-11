@@ -1,0 +1,18 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+name: facedetect-service
+spec:
+replicas: 2 # tells deployment to run 2 pods matching the template
+template: # create pods using pod definition in this template
+    metadata:
+    labels:
+        app: facedetect-service
+    spec:
+    containers:
+    - name: facedetect-service
+        image: yoshio.azurecr.io/tyoshio2002/facedetect:1.0
+        ports:
+        - containerPort: 8080
+  imagePullSecrets:
+    - name: regsecret

@@ -1,0 +1,5 @@
+target/
+EmotionDetect-MSA/target
+FaceEmotionUI-MSA/target
+FaceDetect-MSA/target
+java-bot-MSA/target

@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: emotiondetect
+spec:
+  containers:
+    - name: emotiondetect
+      image: yoshio.azurecr.io/tyoshio2002/emotiondetect:1.0
+      ports:
+        - containerPort: 8080
+  imagePullSecrets:
+    - name: regsecret
+
