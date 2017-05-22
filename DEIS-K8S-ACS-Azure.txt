@@ -1,0 +1,2300 @@
+
+Azure で Docker Registry の作成
+
+Docker Registry Login：ログイン・ユーザ ID、パスワードの確認
+************************************************************
+HostName：yoshio.azurecr.io
+User Name：yoshio
+Password：=****==******=yQWsXU16lytROHfMwm
+************************************************************
+
+
+Example of Dockerfile (ご自身で Docker ファイルを作成)
+************************************************************
+FROM java:8-jdk-alpine
+MAINTAINER Yoshio Terada
+
+VOLUME /tmp
+
+ADD ./target/FaceEmotionUI-MSA-1.0-SNAPSHOT.jar /app.jar
+RUN sh -c 'touch /app.jar'
+ENV JAVA_OPTS=""
+
+RUN chmod 755 /app.jar
+EXPOSE 8080
+ENTRYPOINT java -jar app.jar
+************************************************************
+
+
+Azure Container Registry にイメージを Push
+Docker Build to Push → Azure Container Registry
+************************************************************
+$ docker build -t tyoshio2002/helloworld:1.0 .
+$ docker tag tyoshio2002/helloworld:1.0 yoshio.azurecr.io/tyoshio2002/helloworld:1.0
+$ docker push yoshio.azurecr.io/tyoshio2002/helloworld
+************************************************************
+
+
+Azure Container Services に接続するための鍵を生成（ローカル・マシンで）
+Create ssh key file to access the Azure ACS
+************************************************************
+$ ssh-keygen 
+Generating public/private rsa key pair.
+Enter file in which to save the key (/Users/tyoshio2002/.ssh/id_rsa): /Users/tyoshio2002/.ssh/azure-cs-dcos
+Enter passphrase (empty for no passphrase): 
+Enter same passphrase again: 
+Your identification has been saved in /Users/tyoshio2002/.ssh/azure-cs-dcos.
+Your public key has been saved in /Users/tyoshio2002/.ssh/azure-cs-dcos.pub.
+The key fingerprint is:
+SHA256:7wJOdCtkYvaZFJmJ93IMC8cPKSFo0229AQH6/njXrF0 yoterada@Yoshio-no-MacBook-Pro.local
+The key's randomart image is:
++---[RSA 2048]----+
+| .o.+*+=         |
+|.o.o+o%o         |
+|... .= Oo        |
+|  . + B.*        |
+|   + B *S.       |
+|  .   B ..       |
+|   . o oo .E     |
+|    o...o+.      |
+|   ......o.      |
++----[SHA256]-----+
+$ ls ~/.ssh/azure-cs-dcos*
+/Users/tyoshio2002/.ssh/azure-cs-dcos		/Users/tyoshio2002/.ssh/azure-cs-dcos.pub
+************************************************************
+
+
+ローカル環境で、ACS 上の Kubernates に接続するための準備
+Preparation of Azure Container Service kubernetes (k8s)
+
+Install Azure CLI 2.0 (For Mac)
+************************************************************
+$ curl -L https://aka.ms/InstallAzureCli | bash
+
+Login from Azure CLI 
+************************************************************
+$ az login
+To sign in, use a web browser to open the page https://aka.ms/devicelogin and enter the code ********* to authenticate.
+[
+  {
+    "cloudName": "AzureCloud",
+    "id": “********-****-****-****-d0c37687ef70",
+    "isDefault": true,
+    "name": "Microsoft Azure \u793e\u5185\u5f93\u91cf\u8ab2\u91d1\u30d7\u30e9\u30f3",
+    "state": "Enabled",
+    "tenantId": “********-****-****-****-2d7cd011db47",
+    "user": {
+      "name": “foobar@microsoft.com",
+      "type": "user"
+    }
+  }
+]
+$ az account set --subscription “********-****-****-****-d0c37687ef70"
+************************************************************
+
+
+Create Service Principal and Client Secret for K8S (Input them on the Azure Portal Screen later)
+************************************************************
+$ az ad sp create-for-rbac --role="Contributor" --scopes="/subscriptions/********-****-****-****-d0c37687ef70"
+Retrying role assignment creation: 1/36
+Retrying role assignment creation: 2/36
+{
+  "appId": “********—****-****-05b07d47995a",  <—— Service Principal ID
+  "displayName": "azure-cli-2017-03-26-05-48-18",
+  "name": "http://azure-cli-2017-03-26-05-48-18",
+  "password": “********-****-****-****-bff517bd498a", <—— Client Secret
+  "tenant": “********-****-****-****-2d7cd011db47"
+}
+
+マスターサーバへ作成した鍵を利用したログイン
+Login to the ACS k8s Master Server(-i specify the private key which created by ssh-keygen)
+************************************************************
+$ ssh yoterada@acs-k8smgmt.japanwest.cloudapp.azure.com -A -i azure-acs-k8s
+
+
+Confirm the k8s Nodes
+************************************************************
+$ kubectl get nodes
+NAME                   STATUS                     AGE
+k8s-agent-964810d-0    Ready                      7m
+k8s-agent-964810d-1    Ready                      7m
+k8s-agent-964810d-2    Ready                      7m
+k8s-agent-964810d-3    Ready                      7m
+k8s-agent-964810d-4    Ready                      7m
+k8s-master-964810d-0   Ready,SchedulingDisabled   7m
+
+Confirm the k8s version
+************************************************************
+$ kubectl version
+Client Version: version.Info{Major:"1", Minor:"5", GitVersion:"v1.5.3", GitCommit:"029c3a408176b55c30846f0faedf56aae5992e9b", GitTreeState:"clean", BuildDate:"2017-02-15T06:40:50Z", GoVersion:"go1.7.4", Compiler:"gc", Platform:"linux/amd64"}
+Server Version: version.Info{Major:"1", Minor:"5", GitVersion:"v1.5.3", GitCommit:"029c3a408176b55c30846f0faedf56aae5992e9b", GitTreeState:"clean", BuildDate:"2017-02-15T06:34:56Z", GoVersion:"go1.7.4", Compiler:"gc", Platform:"linux/amd64"}
+
+
+Create the Secret Info to access the Container Private Registry from K8S
+************************************************************
+$ kubectl create secret docker-registry regsecret --docker-username=yoshio --docker-password==****==******=yQWsXU16lytROHfMwm --docker-email=foobar@microsoft.com
+secret "regsecret" created
+
+
+Confirm the Secret Info
+************************************************************
+$ kubectl get secret regsecret --output=yaml
+apiVersion: v1
+data:
+  .dockercfg: **************************************************************************************************************************************************************************************************************************************************************************==
+kind: Secret
+metadata:
+  creationTimestamp: 2017-03-26T06:10:03Z
+  name: regsecret
+  namespace: default
+  resourceVersion: "1901"
+  selfLink: /api/v1/namespaces/default/secrets/regsecret
+  uid: ********-****-****-****-000d3a40749c
+type: kubernetes.io/dockercfg
+
+
+Create POD from YAML File
+
+my-private-reg-pod.yaml file
+************************************************************
+apiVersion: v1
+kind: Pod
+metadata:
+  name: helloworld
+spec:
+  containers:
+    - name: helloworld
+      image: yoshio.azurecr.io/tyoshio2002/helloworld:1.9
+      ports:
+        - containerPort: 28080
+  imagePullSecrets:
+    - name: regsecret
+
+k8s Pod の作成
+************************************************************
+$ kubectl create -f my-private-reg-pod.yaml
+pod "private-reg" created
+
+Confirm the POD
+************************************************************
+$ kubectl get pod private-reg
+NAME          READY     STATUS              RESTARTS   AGE
+private-reg   0/1       ContainerCreating   0          3s
+
+
+
+Confirm the deployment (3 Microservices deployed)
+************************************************************
+$ kubectl get deployment
+NAME            DESIRED   CURRENT   UP-TO-DATE   AVAILABLE   AGE
+emotiondetect   1         1         1            1           18m
+facedetect      1         1         1            1           26m
+javabot         1         1         1            1           14m
+
+
+Pod Scale out the service by using “—-replicas” option.
+************************************************************
+$ kubectl scale deployment emotiondetect --replicas=2 <—— レプリカ数を 2 へ
+deployment "emotiondetect" scaled
+
+Confirm again the status of the deployment
+************************************************************
+$ kubectl get deployment
+NAME            DESIRED   CURRENT   UP-TO-DATE   AVAILABLE   AGE
+emotiondetect   2         2         2            1           18m
+facedetect      1         1         1            1           26m
+javabot         1         1         1            1           14m
+yote
+
+
+VM Scale out from GUI and CLI
+
+
+コマンドラインを使用した VM Scale Out from Azure CLI 
+************************************************************
+$ az acs scale -n containerservice-ACS-K8S-cluster  -g ACS-K8S-cluster --new-agent-count 10
+{
+  "agentPoolProfiles": [
+    {
+      "count": 10,
+      "dnsPrefix": "acs-k8sagents",
+      "fqdn": "",
+      "name": "agentpool",
+      "vmSize": "Standard_DS2"
+    }
+  ],
+  "customProfile": null,
+  "diagnosticsProfile": {
+    "vmDiagnostics": {
+      "enabled": false,
+      "storageUri": null
+    }
+  },
+  "id": "/subscriptions/********-****-****-bd9c-d0c37687ef70/resourceGroups/ACS-K8S-cluster/providers/Microsoft.ContainerService/containerServices/containerservice-ACS-K8S-cluster",
+  "linuxProfile": {
+    "adminUsername": "yoterada",
+    "ssh": {
+      "publicKeys": [
+        {
+          "keyData": "ssh-rsa **********************************/*******************************************************************/
+***************************************************************/************************************
++********************************************/**********************************/
+***************************************************************************+***********"
+        }
+      ]
+    }
+  },
+  "location": "japanwest",
+  "masterProfile": {
+    "count": 1,
+    "dnsPrefix": "acs-k8smgmt",
+    "fqdn": "acs-k8smgmt.japanwest.cloudapp.azure.com"
+  },
+  "name": "containerservice-ACS-K8S-cluster",
+  "orchestratorProfile": {
+    "orchestratorType": "Kubernetes"
+  },
+  "provisioningState": "Succeeded",
+  "resourceGroup": "ACS-K8S-cluster",
+  "servicePrincipalProfile": {
+    "clientId": “********-****-****-aa86-05b07d47995a",
+    "secret": null
+  },
+  "tags": null,
+  "type": "Microsoft.ContainerService/ContainerServices",
+  "windowsProfile": null
+}
+$ 
+
+
+******************* Kubernetes create Name Space  *******************
+
+yoterada@k8s-master:~$ kubectl create namespace development
+namespace "development" created
+yoterada@k8s-master:~$ kubectl create namespace staging
+namespace "staging" created
+yoterada@k8s-master:~$ kubectl create namespace production
+namespace "production" created
+yoterada@k8s-master:~$ 
+
+
+Helm のインストール
+https://docs.microsoft.com/ja-jp/azure/container-service/container-service-kubernetes-helm
+helm init --upgrade
+
+******************* Install workflow(Preparation：ストレージ作成＆アカウントの作成) *******************
+
+https://deis.com/docs/workflow/installing-workflow/
+
+Install For Azure:
+https://github.com/deis/workflow/blob/master/src/quickstart/provider/azure-acs/install-azure-acs.md
+
+
+Local-Machine:$ az login
+To sign in, use a web browser to open the page https://aka.ms/devicelogin and enter the code ********* to authenticate.
+[
+  {
+    "cloudName": "AzureCloud",
+    "id": "f77aafe8-****-****-****-d0c37687ef70",
+    "isDefault": true,
+    "name": "Microsoft Azure \u793e\u5185\u5f93\u91cf\u8ab2\u91d1\u30d7\u30e9\u30f3",
+    "state": "Enabled",
+    "tenantId": "72f988bf-****-****-****-2d7cd011db47",
+    "user": {
+      "name": "yoterada@microsoft.com",
+      "type": "user"
+    }
+  }
+]
+Local-Machine:$ export AZURE_SA_NAME=yoshiofileup
+Local-Machine:$ export AZURE_RG_NAME=yoshio-fileup
+Local-Machine:$ az storage account keys list -n $AZURE_SA_NAME -g $AZURE_RG_NAME --query [0].value --output tsv
+n+*************************************************************+**********************==
+
+******************* Install workflow *******************
+
+yoterada@k8s-master:~$ helm repo add deis https://charts.deis.com/workflow
+"deis" has been added to your repositories
+yoterada@k8s-master:~$ export AZURE_SA_NAME=yoshiofileup
+yoterada@k8s-master:~$ export AZURE_RG_NAME=yoshio-fileup
+yoterada@k8s-master:~$ export AZURE_SA_KEY=
+n+*************************************************************+**********************==
+
+******************* Strongly Recommend to use following command *******************
+
+yoterada@k8s-master:~$ helm install deis/workflow --namespace=deis --set global.storage=azure,azure.accountname=$AZURE_SA_NAME,azure.accountkey=$AZURE_SA_KEY,azure.registry_container=registry,azure.database_container=database,azure.builder_container=builder
+NAME:   willing-bobcat
+LAST DEPLOYED: Wed Apr 26 11:10:53 2017
+NAMESPACE: deis
+STATUS: DEPLOYED
+
+RESOURCES:
+==> v1/Service
+NAME                    CLUSTER-IP    EXTERNAL-IP  PORT(S)                                                   AGE
+deis-monitor-influxapi  10.0.157.63   <none>       80/TCP                                                    8s
+deis-logger-redis       10.0.246.86   <none>       6379/TCP                                                  8s
+deis-workflow-manager   10.0.209.253  <none>       80/TCP                                                    8s
+deis-monitor-influxui   10.0.113.144  <none>       80/TCP                                                    8s
+deis-database           10.0.116.58   <none>       5432/TCP                                                  8s
+deis-logger             10.0.229.55   <none>       80/TCP                                                    7s
+deis-controller         10.0.254.203  <none>       80/TCP                                                    7s
+deis-router             10.0.58.74    <pending>    80:32742/TCP,443:31545/TCP,2222:32162/TCP,9090:30407/TCP  7s
+deis-builder            10.0.221.218  <none>       2222/TCP                                                  7s
+deis-nsqd               10.0.204.248  <none>       4151/TCP,4150/TCP                                         7s
+deis-registry           10.0.146.225  <none>       80/TCP                                                    7s
+deis-monitor-grafana    10.0.144.34   <none>       80/TCP                                                    7s
+
+==> extensions/v1beta1/DaemonSet
+NAME                   DESIRED  CURRENT  READY  NODE-SELECTOR  AGE
+deis-logger-fluentd    11       11       10     <none>         7s
+deis-monitor-telegraf  11       11       10     <none>         7s
+deis-registry-proxy    11       11       10     <none>         6s
+
+==> extensions/v1beta1/Deployment
+NAME                   DESIRED  CURRENT  UP-TO-DATE  AVAILABLE  AGE
+deis-builder           1        1        1           0          6s
+deis-workflow-manager  1        1        1           1          6s
+deis-monitor-grafana   1        1        1           0          6s
+deis-router            1        1        1           0          6s
+deis-registry          1        1        1           0          6s
+deis-database          1        1        1           0          6s
+deis-controller        1        1        1           0          6s
+deis-logger-redis      1        1        1           0          6s
+deis-monitor-influxdb  1        1        1           0          6s
+deis-nsqd              1        1        1           0          5s
+deis-logger            1        1        1           0          5s
+
+==> v1/Secret
+NAME                   TYPE    DATA  AGE
+deis-router-dhparam    Opaque  1     9s
+objectstorage-keyfile  Opaque  5     9s
+minio-user             Opaque  2     9s
+
+==> v1/ConfigMap
+NAME                  DATA  AGE
+slugbuilder-config    2     9s
+dockerbuilder-config  2     9s
+slugrunner-config     1     8s
+
+==> v1/ServiceAccount
+NAME                   SECRETS  AGE
+deis-builder           1        8s
+deis-router            1        8s
+deis-workflow-manager  1        8s
+deis-database          1        8s
+deis-nsqd              1        8s
+deis-logger-fluentd    1        8s
+deis-controller        1        8s
+deis-monitor-telegraf  1        8s
+deis-logger            1        8s
+deis-registry          1        8s
+
+
+******************* Install workflow *******************
+
+Detail operation of DEIS WorkFlow
+https://deis.com/docs/workflow/
+
+yoterada@k8s-master:~$ kubectl --namespace=deis get pods
+NAME                                     READY     STATUS              RESTARTS   AGE
+deis-builder-3550604618-rt117            0/1       ContainerCreating   0          41s
+deis-controller-3205907661-jf6gw         0/1       ContainerCreating   0          42s
+deis-database-223698169-2phx3            0/1       ContainerCreating   0          41s
+deis-logger-343314728-s0s59              0/1       ContainerCreating   0          42s
+deis-logger-fluentd-8dk1r                1/1       Running             0          43s
+deis-logger-fluentd-g1wlv                0/1       ContainerCreating   0          43s
+deis-logger-fluentd-n5chn                1/1       Running             0          43s
+deis-logger-fluentd-nrmbn                1/1       Running             0          43s
+deis-logger-fluentd-w5ztg                1/1       Running             0          43s
+deis-logger-redis-304849759-jm2sg        0/1       ContainerCreating   0          41s
+deis-minio-676004970-b39xx               0/1       ContainerCreating   0          42s
+deis-monitor-grafana-541875647-5js9z     0/1       ContainerCreating   0          42s
+deis-monitor-influxdb-2881701064-vgszj   0/1       ContainerCreating   0          42s
+deis-monitor-telegraf-fpk2t              1/1       Running             0          43s
+deis-monitor-telegraf-knjwn              1/1       Running             0          43s
+deis-monitor-telegraf-r04sw              0/1       ContainerCreating   0          43s
+deis-monitor-telegraf-vnj4w              0/1       ContainerCreating   0          43s
+deis-monitor-telegraf-vtzt0              0/1       ContainerCreating   0          43s
+deis-nsqd-3764030276-bf36g               0/1       ContainerCreating   0          43s
+deis-registry-245622726-hlxf4            0/1       ContainerCreating   0          42s
+deis-registry-proxy-7xw44                0/1       ContainerCreating   0          43s
+deis-registry-proxy-lbrc4                0/1       ContainerCreating   0          43s
+deis-registry-proxy-skp7w                0/1       ContainerCreating   0          43s
+deis-registry-proxy-t55j2                0/1       ContainerCreating   0          43s
+deis-registry-proxy-wmbj9                0/1       ContainerCreating   0          43s
+deis-router-2305018641-9twp9             0/1       ContainerCreating   0          43s
+deis-workflow-manager-1893365363-dpk3b   0/1       ContainerCreating   0          42s
+yoterada@k8s-master:~$ 
+
+
+******************* Confirm the Router Address for external access *******************
+
+https://deis.com/docs/workflow/quickstart/deploy-an-app/
+
+yoterada@k8s-master:~/java-bot/Java-bot-MSA$ kubectl --namespace=deis describe svc deis-router
+Name:			deis-router
+Namespace:		deis
+Labels:			heritage=deis
+Selector:		app=deis-router
+Type:			LoadBalancer
+IP:			10.0.58.74
+LoadBalancer Ingress:	000.111.222.333 <——— Important
+Port:			http	80/TCP
+NodePort:		http	32742/TCP
+Endpoints:		10.244.3.23:8080
+Port:			https	443/TCP
+NodePort:		https	31545/TCP
+Endpoints:		10.244.3.23:6443
+Port:			builder	2222/TCP
+NodePort:		builder	32162/TCP
+Endpoints:		10.244.3.23:2222
+Port:			healthz	9090/TCP
+NodePort:		healthz	30407/TCP
+Endpoints:		10.244.3.23:9090
+Session Affinity:	None
+Events:
+  FirstSeen	LastSeen	Count	From			SubObjectPath	Type		Reason			Message
+  ---------	--------	-----	----			-------------	--------	------			-------
+  31m		31m		1	{service-controller }			Normal		CreatingLoadBalancer	Creating load balancer
+  30m		30m		1	{service-controller }			Normal		CreatedLoadBalancer	Created load balancer
+
+******************* Confirm the status of DEIS instance *******************
+
+yoterada@k8s-master:~/.ssh$ helm status willing-bobcat
+LAST DEPLOYED: Wed Apr 26 11:10:53 2017
+NAMESPACE: deis
+STATUS: DEPLOYED
+
+RESOURCES:
+==> v1/Secret
+NAME                   TYPE    DATA  AGE
+deis-router-dhparam    Opaque  1     17m
+objectstorage-keyfile  Opaque  5     17m
+minio-user             Opaque  2     17m
+
+==> v1/ConfigMap
+NAME                  DATA  AGE
+slugbuilder-config    2     17m
+dockerbuilder-config  2     17m
+slugrunner-config     1     17m
+
+==> v1/ServiceAccount
+NAME                   SECRETS  AGE
+deis-builder           1        17m
+deis-router            1        17m
+deis-workflow-manager  1        17m
+deis-database          1        17m
+deis-nsqd              1        17m
+deis-logger-fluentd    1        17m
+deis-controller        1        17m
+deis-monitor-telegraf  1        17m
+deis-logger            1        17m
+deis-registry          1        17m
+
+==> v1/Service
+NAME                    CLUSTER-IP    EXTERNAL-IP     PORT(S)                                                   AGE
+deis-monitor-influxapi  10.0.157.63   <none>          80/TCP                                                    17m
+deis-logger-redis       10.0.246.86   <none>          6379/TCP                                                  17m
+deis-workflow-manager   10.0.209.253  <none>          80/TCP                                                    17m
+deis-monitor-influxui   10.0.113.144  <none>          80/TCP                                                    17m
+deis-database           10.0.116.58   <none>          5432/TCP                                                  17m
+deis-logger             10.0.229.55   <none>          80/TCP                                                    17m
+deis-controller         10.0.254.203  <none>          80/TCP                                                    17m
+deis-router             10.0.58.74    000.111.222.333  80:32742/TCP,443:31545/TCP,2222:32162/TCP,9090:30407/TCP  17m
+deis-builder            10.0.221.218  <none>          2222/TCP                                                  17m
+deis-nsqd               10.0.204.248  <none>          4151/TCP,4150/TCP                                         17m
+deis-registry           10.0.146.225  <none>          80/TCP                                                    17m
+deis-monitor-grafana    10.0.144.34   <none>          80/TCP                                                    17m
+
+==> extensions/v1beta1/DaemonSet
+NAME                   DESIRED  CURRENT  READY  NODE-SELECTOR  AGE
+deis-logger-fluentd    11       11       11     <none>         17m
+deis-monitor-telegraf  11       11       10     <none>         17m
+deis-registry-proxy    11       11       11     <none>         17m
+
+==> extensions/v1beta1/Deployment
+NAME                   DESIRED  CURRENT  UP-TO-DATE  AVAILABLE  AGE
+deis-builder           1        1        1           1          17m
+deis-workflow-manager  1        1        1           1          17m
+deis-monitor-grafana   1        1        1           1          17m
+deis-router            1        1        1           1          17m
+deis-registry          1        1        1           1          17m
+deis-database          1        1        1           1          17m
+deis-controller        1        1        1           1          17m
+deis-logger-redis      1        1        1           1          17m
+deis-monitor-influxdb  1        1        1           1          17m
+deis-nsqd              1        1        1           1          17m
+deis-logger            1        1        1           1          17m
+
+******************* Create Login Account for DEIS *******************
+
+yoterada@k8s-master:~/.ssh$ deis register http://deis.000.111.222.333.nip.io
+username: yoterada
+password: 
+password (confirm): 
+email: Yoshio.Terada@microsoft.com
+Registered yoterada
+Logged in as yoterada
+Configuration file written to /home/yoterada/.deis/client.json
+
+******************* Copy public key of mine (by creating ssh-keygen) *******************
+
+yoterada@k8s-master:~/.ssh$ deis keys:add ~/.ssh/id_rsa.pub 
+Uploading id_rsa.pub to deis... done
+yoterada@k8s-master:~/.ssh$ deis keys:list
+=== yoterada Keys
+yoterada@k8s-master ssh-rsa AAAAB3Nz...491D5C0D-0
+yoterada@k8s-master:~/.ssh$ exit
+logout
+Connection to yoshio3mgmt.japanwest.cloudapp.azure.com closed.
+
+******************* Login to the system again *******************
+
+$ ssh yoterada@yoshio3mgmt.japanwest.cloudapp.azure.com -i azure-acs-k8s
+Welcome to Ubuntu 16.04 LTS (GNU/Linux 4.4.0-28-generic x86_64)
+
+ * Documentation:  https://help.ubuntu.com/
+
+  Get cloud support with Ubuntu Advantage Cloud Guest:
+    http://www.ubuntu.com/business/services/cloud
+
+96 packages can be updated.
+0 updates are security updates.
+
+
+*** System restart required ***
+Last login: Wed Apr 26 11:20:03 2017 from 115.163.215.198
+
+******************* Login to the DEIS *******************
+
+yoterada@k8s-master:~$ deis login http://deis.000.111.222.333.nip.io
+username: yoterada
+password: 
+Logged in as yoterada
+Configuration file written to /home/yoterada/.deis/client.json
+
+yoterada@k8s-master:~$ deis whoami
+You are yoterada at http://deis.000.111.222.333.nip.io
+
+
+
+
+
+GUI による運用監視・モニタリング
+
+K8S Web UI(ダッシュボード) の起動 & 有効化
+Start the Admin Console on WebUI 
+************************************************************
+$ kubectl proxy
+
+SSH tunneling and port forwarding (WebUI = 8001 port)
+************************************************************
+$ ssh -fNL 8001:localhost:8001 yoterada@yoshio3mgmt.japanwest.cloudapp.azure.com  -i azure-acs-k8s
+
+Access to the Admin Console of k8s as follows
+http://localhost:8001/ui
+
+
+
+******************* (HELM) Install Kubernates Ops View *******************
+
+yoterada@k8s-master:~$ helm install stable/kube-ops-view --namespace common
+LAST DEPLOYED: Mon May  8 10:42:41 2017
+NAMESPACE: common
+STATUS: DEPLOYED
+
+RESOURCES:
+==> extensions/v1beta1/Deployment
+NAME                               DESIRED  CURRENT  UP-TO-DATE  AVAILABLE  AGE
+belligerent-terrier-kube-ops-view  1        1        1           1          13d
+
+==> v1/Service
+NAME                               CLUSTER-IP   EXTERNAL-IP  PORT(S)  AGE
+belligerent-terrier-kube-ops-view  10.0.237.28  <none>       80/TCP   13d
+
+
+NOTES:
+To access the Kubernetes Operational View UI:
+
+1. First start the kubectl proxy:
+
+   kubectl proxy
+
+2. Now open the following URL in your browser:
+
+   http://localhost:8001/api/v1/proxy/namespaces/common/services/belligerent-terrier-kube-ops-view/
+
+Please try reloading the page if you see "ServiceUnavailable / no endpoints available for service", pod creation might take a moment.
+
+
+Execute Kubectl Proxy
+yoterada@k8s-master:~$ kubectl proxy --namespace common &
+
+Local Environment :
+$ ssh -fNL 8001:localhost:8001 yoterada@yoshio3mgmt.japanwest.cloudapp.azure.com  -i azure-acs-k8s
+
+Access to the following URL by using browser
+http://localhost:8001/api/v1/proxy/namespaces/common/services/belligerent-terrier-kube-ops-view/
+
+
+
+******************** Access to the Monitoring GUI (Grafana) *********************************
+モニタリング・ツール grafana 
+http://grafana.000.111.222.333.nip.io/
+User : admin
+Password : admin
+
+
+
+******************** Install Advanced Admin GUI Dashboard(deisdash) *********************************
+
+拡張の管理画面 (deisdash のインストール)
+https://github.com/olalonde/deisdash
+
+yoterada@k8s-master:~$ mkdir deisdash
+
+yoterada@k8s-master:~$ cd deisdash/
+
+yoterada@k8s-master:~/deisdash$ ls
+
+yoterada@k8s-master:~/deisdash$ git clone https://github.com/olalonde/deisdash.git
+Cloning into 'deisdash'...
+remote: Counting objects: 218, done.
+remote: Total 218 (delta 0), reused 0 (delta 0), pack-reused 218
+Receiving objects: 100% (218/218), 1009.89 KiB | 0 bytes/s, done.
+Resolving deltas: 100% (74/74), done.
+Checking connectivity... done.
+
+yoterada@k8s-master:~/deisdash$ cd deisdash/
+
+yoterada@k8s-master:~/deisdash/deisdash$ ls
+actions     containers  index.html  LICENSE     package.json  reducers   server.js  store   utils                    webpack.config.js
+components  electron    index.js    middleware  README.md     routes.js  static     styles  webpack.build.config.js  webpack.electron.config.js
+
+yoterada@k8s-master:~/deisdash/deisdash$ deis create dash
+Creating Application... done, created dash
+Git remote deis successfully created for app dash.
+
+yoterada@k8s-master:~/deisdash/deisdash$ deis config:set NPM_CONFIG_PRODUCTION=false
+Creating config... done
+
+=== dash Config
+NPM_CONFIG_PRODUCTION      false
+
+yoterada@k8s-master:~/deisdash/deisdash$ deis config:set NODE_ENV=production
+Creating config... done
+
+=== dash Config
+NODE_ENV                   production
+NPM_CONFIG_PRODUCTION      false
+
+yoterada@k8s-master:~/deisdash/deisdash$ git push deis
+warning: push.default is unset; its implicit value has changed in
+Git 2.0 from 'matching' to 'simple'. To squelch this message
+and maintain the traditional behavior, use:
+
+  git config --global push.default matching
+
+To squelch this message and adopt the new behavior now, use:
+
+  git config --global push.default simple
+
+When push.default is set to 'matching', git will push local branches
+to the remote branches that already exist with the same name.
+
+Since Git 2.0, Git defaults to the more conservative 'simple'
+behavior, which only pushes the current branch to the corresponding
+remote branch that 'git pull' uses to update the current branch.
+
+See 'git help config' and search for 'push.default' for further information.
+(the 'simple' mode was introduced in Git 1.7.11. Use the similar mode
+'current' instead of 'simple' if you sometimes use older versions of Git)
+
+Counting objects: 217, done.
+Delta compression using up to 2 threads.
+Compressing objects: 100% (135/135), done.
+Writing objects: 100% (217/217), 1009.75 KiB | 0 bytes/s, done.
+Total 217 (delta 74), reused 217 (delta 74)
+remote: Resolving deltas: 100% (74/74), done.
+Starting build... but first, coffee!
+...
+...
+...
+...
+...
+...
+...
+...
+...
+...
+...
+...
+...
+-----> Restoring cache...
+       No cache file found. If this is the first deploy, it will be created now.
+-----> Node.js app detected
+       
+-----> Creating runtime environment
+       
+       NPM_CONFIG_LOGLEVEL=error
+       NPM_CONFIG_PRODUCTION=false
+       NODE_VERBOSE=false
+       NODE_ENV=production
+       NODE_MODULES_CACHE=true
+       
+-----> Installing binaries
+       engines.node (package.json):  5.5.0
+       engines.npm (package.json):   3.3.12
+       
+       Downloading and installing node 5.5.0...
+       npm 3.3.12 already installed with node
+       
+-----> Restoring cache
+       Skipping cache restore (new runtime signature)
+       
+-----> Building dependencies
+       Installing node modules (package.json)
+       
+       > node-sass@3.13.1 install /tmp/build/node_modules/node-sass
+       > node scripts/install.js
+       
+       Downloading binary from https://github.com/sass/node-sass/releases/download/v3.13.1/linux-x64-47_binding.node
+……
+……
+……
+
+-----> Discovering process types
+       Default process types for Node.js -> web
+-----> Checking for changes inside the cache directory...
+       Files inside cache folder changed, uploading new cache...
+       Done: Uploaded cache (26M)
+-----> Compiled slug size is 40M
+Build complete.
+Launching App...
+...
+...
+...
+...
+...
+...
+Done, dash:v4 deployed to Workflow
+
+Use 'deis open' to view this application in your browser
+
+To learn more, use 'deis help' or visit https://deis.com/
+
+To ssh://git@deis-builder.000.111.222.333.nip.io:2222/dash.git
+ * [new branch]      master -> master
+yoterada@k8s-master:~/deisdash/deisdash$ deis apps:list
+=== Apps
+dash
+earthy-vineyard
+iconic-quantity
+lonely-jokester
+
+
+Access to following URL.
+http://dash.000.111.222.333.nip.io/dash/apps
+
+
+******************* (deis) Install Prometheus (Metrics) *******************
+
+yoterada@k8s-master:~$ helm install stable/prometheus --namespace common
+NAME:   tan-platypus
+LAST DEPLOYED: Thu May  4 18:26:48 2017
+NAMESPACE: common
+STATUS: DEPLOYED
+
+RESOURCES:
+==> v1/ConfigMap
+NAME                                  DATA  AGE
+tan-platypus-prometheus-server        3     3s
+tan-platypus-prometheus-alertmanager  1     3s
+
+==> v1/PersistentVolumeClaim
+NAME                                  STATUS   VOLUME  CAPACITY  ACCESSMODES  AGE
+tan-platypus-prometheus-alertmanager  Pending  3s
+tan-platypus-prometheus-server        Pending  3s
+
+==> v1/Service
+NAME                                        CLUSTER-IP    EXTERNAL-IP  PORT(S)   AGE
+tan-platypus-prometheus-server              10.0.26.108   <none>       80/TCP    2s
+tan-platypus-prometheus-alertmanager        10.0.137.244  <none>       80/TCP    2s
+tan-platypus-prometheus-node-exporter       None          <none>       9100/TCP  2s
+tan-platypus-prometheus-kube-state-metrics  None          <none>       80/TCP    2s
+
+==> extensions/v1beta1/DaemonSet
+NAME                                   DESIRED  CURRENT  READY  NODE-SELECTOR  AGE
+tan-platypus-prometheus-node-exporter  0        0        0      <none>         2s
+
+==> extensions/v1beta1/Deployment
+NAME                                        DESIRED  CURRENT  UP-TO-DATE  AVAILABLE  AGE
+tan-platypus-prometheus-kube-state-metrics  1        1        1           0          2s
+tan-platypus-prometheus-alertmanager        1        1        1           0          2s
+tan-platypus-prometheus-server              1        1        1           0          2s
+
+
+NOTES:
+The Prometheus server can be accessed via port 80 on the following DNS name from within your cluster:
+tan-platypus-prometheus-server.common.svc.cluster.local
+
+
+Get the Prometheus server URL by running these commands in the same shell:
+  export POD_NAME=$(kubectl get pods --namespace common -l "app=prometheus,component=server" -o jsonpath="{.items[0].metadata.name}")
+  kubectl --namespace common port-forward $POD_NAME 9090
+
+
+The Prometheus alertmanager can be accessed via port 80 on the following DNS name from within your cluster:
+tan-platypus-prometheus-alertmanager.common.svc.cluster.local
+
+
+Get the Alertmanager URL by running these commands in the same shell:
+  export POD_NAME=$(kubectl get pods --namespace common -l "app=prometheus,component=alertmanager" -o jsonpath="{.items[0].metadata.name}")
+  kubectl --namespace common port-forward $POD_NAME 9093
+
+For more information on running Prometheus, visit:
+https://prometheus.io/
+
+
+yoterada@k8s-master:~$ kubectl get pods --namespace common -l "app=prometheus,component=server" -o jsonpath="{.items[0].metadata.name}" 
+tan-platypus-prometheus-server-3176895372-t4jd8
+
+yoterada@k8s-master:~$ kubectl --namespace common port-forward tan-platypus-prometheus-server-3176895372-t4jd8 9090
+Forwarding from 127.0.0.1:9090 -> 9090
+Forwarding from [::1]:9090 -> 9090
+
+
+Local Environment
+$ ssh -fNL 9090:localhost:9090 yoterada@yoshio3mgmt.japanwest.cloudapp.azure.com  -i azure-acs-k8s
+
+Access to Following URL
+http://localhost:9090/
+
+******************* Deploy Application by using Buildpacks (Preparation) *******************
+
+https://deis.com/docs/workflow/applications/using-dockerfiles/
+
+yoterada@k8s-master:~$ cd java-bot/
+yoterada@k8s-master:~/java-bot$ ls
+Java-bot-MSA
+yoterada@k8s-master:~/java-bot$ cd Java-bot-MSA/
+yoterada@k8s-master:~/java-bot/Java-bot-MSA$ ls -la
+total 120020
+drwxrwxr-x 5 yoterada yoterada      4096 Apr 25 19:20 .
+drwxrwxr-x 3 yoterada yoterada      4096 Apr 25 16:42 ..
+-rw-rw-r-- 1 yoterada yoterada       304 Apr 25 19:20 Dockerfile
+-rw-rw-r-- 1 yoterada yoterada         8 Apr 25 16:42 .gitignore
+-rwxr-xr-x 1 yoterada yoterada 122858529 Apr 25 17:01 java-bot-MSA-1.0-SNAPSHOT.jar
+-rw-rw-r-- 1 yoterada yoterada      1382 Apr 25 16:42 nb-configuration.xml
+-rw-rw-r-- 1 yoterada yoterada      5915 Apr 25 16:42 pom.xml
+drwxrwxr-x 3 yoterada yoterada      4096 Apr 25 16:42 src
+drwxrwxr-x 7 yoterada yoterada      4096 Apr 25 19:13 target
+
+yoterada@k8s-master:~/java-bot/Java-bot-MSA$ git init
+Initialized empty Git repository in /home/yoterada/java-bot/Java-bot-MSA/.git/
+yoterada@k8s-master:~/java-bot/Java-bot-MSA$ git add .
+yoterada@k8s-master:~/java-bot/Java-bot-MSA$ git commit -m "First Commit"
+[master (root-commit) 65aca56] First Commit
+ Committer: Ubuntu <yoterada@k8s-master.1vvqbssgqtqulagd24zm312d5d.mx.internal.cloudapp.net>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 32 files changed, 2561 insertions(+)
+ create mode 100644 .gitignore
+ create mode 100644 Dockerfile
+ create mode 100755 java-bot-MSA-1.0-SNAPSHOT.jar
+ create mode 100644 nb-configuration.xml
+ create mode 100644 pom.xml
+ create mode 100644 src/main/java/com/yoshio3/BotMessageReceiver.java
+ create mode 100644 src/main/java/com/yoshio3/BotRESTApplication.java
+ create mode 100644 src/main/java/com/yoshio3/rest/entities/AccessTokenEntity.java
+ create mode 100644 src/main/java/com/yoshio3/rest/entities/MessageBackToBotFramework.java
+ create mode 100644 src/main/java/com/yoshio3/rest/entities/MessageFromBotFrameWork.java
+ create mode 100644 src/main/java/com/yoshio3/rest/entities/MyObjectMapperProvider.java
+ create mode 100644 src/main/java/com/yoshio3/rest/entities/childelements/Conversation.java
+ create mode 100644 src/main/java/com/yoshio3/rest/entities/childelements/Entities.java
+ create mode 100644 src/main/java/com/yoshio3/rest/entities/childelements/From.java
+ create mode 100644 src/main/java/com/yoshio3/rest/entities/childelements/Members.java
+ create mode 100644 src/main/java/com/yoshio3/rest/entities/childelements/Recipient.java
+ create mode 100644 src/main/java/com/yoshio3/rest/entities/childelements/Sender.java
+ create mode 100644 src/main/java/com/yoshio3/rest/entities/facebook/FacebookMessageFromBotFramework.java
+ create mode 100644 src/main/java/com/yoshio3/rest/entities/facebook/childelements/ChannelData.java
+ create mode 100644 src/main/java/com/yoshio3/rest/entities/facebook/childelements/FaceBookMessage.java
+ create mode 100644 src/main/java/com/yoshio3/rest/entities/luis/ResponseFromLUIS.java
+ create mode 100644 src/main/java/com/yoshio3/rest/entities/luis/childelements/Entity.java
+ create mode 100644 src/main/java/com/yoshio3/rest/entities/luis/childelements/Intent.java
+ create mode 100644 src/main/java/com/yoshio3/rest/entities/luis/childelements/TopScoringIntent.java
+ create mode 100644 src/main/java/com/yoshio3/services/AccessTokenService.java
+ create mode 100644 src/main/java/com/yoshio3/services/BasicRESTService.java
+ create mode 100644 src/main/java/com/yoshio3/services/BotService.java
+ create mode 100644 src/main/java/com/yoshio3/services/LUISService.java
+ create mode 100644 src/main/java/com/yoshio3/services/PropertyReaderService.java
+ create mode 100644 src/main/resources/app-resources.properties
+ create mode 100644 src/main/webapp/WEB-INF/web.xml
+ create mode 100644 src/main/webapp/index.html
+
+******************* Deploy Application by using Buildpacks *******************
+
+yoterada@k8s-master:~/java-bot/Java-bot-MSA$ deis create
+Creating Application... done, created jicama-waterbed
+Git remote deis successfully created for app jicama-waterbed.
+yoterada@k8s-master:~/java-bot/Java-bot-MSA$  git push deis master
+The authenticity of host '[deis-builder.000.111.222.333.nip.io]:2222 ([000.111.222.333]:2222)' can't be established.
+ECDSA key fingerprint is SHA256:LcuXMMf/8bDi5T4zaXQ16HzLjjEgg6/HgvxPipmSvnI.
+Are you sure you want to continue connecting (yes/no)? yes
+Warning: Permanently added '[deis-builder.000.111.222.333.nip.io]:2222,[000.111.222.333]:2222' (ECDSA) to the list of known hosts.
+Counting objects: 50, done.
+Delta compression using up to 2 threads.
+Compressing objects: 100% (44/44), done.
+Writing objects: 100% (50/50), 111.11 MiB | 41.82 MiB/s, done.
+Total 50 (delta 16), reused 0 (delta 0)
+Starting build... but first, coffee!
+...
+Step 1 : FROM java:8-jdk-alpine
+ ---> 3fd9dd82815c
+Step 2 : MAINTAINER Yoshio Terada
+ ---> Running in 9b5dc10226e7
+ ---> b9f017e4a77c
+Removing intermediate container 9b5dc10226e7
+Step 3 : VOLUME /tmp
+ ---> Running in e3d7708760b8
+ ---> c5731f394d6e
+Removing intermediate container e3d7708760b8
+Step 4 : ADD java-bot-MSA-1.0-SNAPSHOT.jar java-bot-MSA-1.0-SNAPSHOT.jar
+ ---> 48507fa07657
+Removing intermediate container 3e2346688d7b
+Step 5 : RUN sh -c 'touch /java-bot-MSA-1.0-SNAPSHOT.jar'
+ ---> Running in d00eb73ae96e
+ ---> cfd9c6975dab
+Removing intermediate container d00eb73ae96e
+Step 6 : ENV JAVA_OPTS ""
+ ---> Running in eb51205cc307
+ ---> 3f81a21580e7
+Removing intermediate container eb51205cc307
+Step 7 : RUN chmod 755 /java-bot-MSA-1.0-SNAPSHOT.jar
+ ---> Running in 40a23e26b62b
+ ---> 918b6def262e
+Removing intermediate container 40a23e26b62b
+Step 8 : EXPOSE 8080
+ ---> Running in 86b11edd53ec
+ ---> 519e39489a24
+Removing intermediate container 86b11edd53ec
+Step 9 : ENTRYPOINT java -jar java-bot-MSA-1.0-SNAPSHOT.jar
+ ---> Running in 7c642cc9dffc
+ ---> 96dcc04d32f3
+Removing intermediate container 7c642cc9dffc
+Successfully built 96dcc04d32f3
+Pushing to registry
+Build complete.
+Launching App...
+...
+...
+...
+...
+...
+...
+...
+Done, jicama-waterbed:v2 deployed to Workflow
+
+Use 'deis open' to view this application in your browser
+
+To learn more, use 'deis help' or visit https://deis.com/
+
+To ssh://git@deis-builder.000.111.222.333.nip.io:2222/jicama-waterbed.git
+ * [new branch]      master -> master
+
+******************* Confirm the Deployed Application *******************
+
+yoterada@k8s-master:~/java-bot/Java-bot-MSA$ deis ps
+=== lonely-jokester Processes
+--- cmd:
+
+******************* Scale up & down the  Application *******************
+yoterada@k8s-master:~/java-bot/Java-bot-MSA$ deis scale cmd=4 -a lonely-jokester
+Scaling processes... but first, coffee!
+done in 42s
+=== lonely-jokester Processes
+--- cmd:
+lonely-jokester-cmd-2582995299-782xf up (v2)
+lonely-jokester-cmd-2582995299-9q7bl up (v2)
+lonely-jokester-cmd-2582995299-ldp50 up (v2)
+lonely-jokester-cmd-2582995299-np4cn up (v2)
+yoterada@k8s-master:~/java-bot/Java-bot-MSA$ deis scale cmd=1 -a lonely-jokester
+Scaling processes... but first, coffee!
+done in 30s
+=== lonely-jokester Processes
+--- cmd:
+lonely-jokester-cmd-2582995299-ldp50 up (v2)
+
+
+******************* Configure the Healthcheck of Application *******************
+yoterada@k8s-master:/usr/local/bin$ deis healthchecks:set liveness httpGet 80 --type=cmd -a lonely-jokester
+Applying livenessProbe healthcheck... done
+
+=== lonely-jokester Healthchecks
+
+cmd:
+--- Liveness
+Initial Delay (seconds): 50
+Timeout (seconds): 50
+Period (seconds): 10
+Success Threshold: 1
+Failure Threshold: 3
+Exec Probe: N/A
+HTTP GET Probe: Path="/" Port=80 HTTPHeaders=[]
+TCP Socket Probe: N/A
+
+--- Readiness
+No readiness probe configured.
+yoterada@k8s-master:/usr/local/bin$ deis healthchecks:list -a lonely-jokester
+=== lonely-jokester Healthchecks
+
+cmd:
+--- Liveness
+Initial Delay (seconds): 50
+Timeout (seconds): 50
+Period (seconds): 10
+Success Threshold: 1
+Failure Threshold: 3
+Exec Probe: N/A
+HTTP GET Probe: Path="/" Port=80 HTTPHeaders=[]
+TCP Socket Probe: N/A
+
+--- Readiness
+No readiness probe configured.
+
+
+******************* Change the maintenance mode *******************
+
+yoterada@k8s-master:/usr/local/bin$ deis maintenance:info -a lonely-jokester
+Maintenance mode is off.
+yoterada@k8s-master:/usr/local/bin$ deis maintenance:on -a lonely-jokester
+Enabling maintenance mode for lonely-jokester... done
+
+Can’t get the contents in this time.
+$ curl http://lonely-jokester.000.111.222.333.nip.io
+<!DOCTYPE html>
+<title>Site Maintenance</title>
+
+yoterada@k8s-master:/usr/local/bin$ deis maintenance:off -a lonely-jokester
+Disabling maintenance mode for lonely-jokester... done
+
+******************* Confirm the individual release of Application (Change Tracking) *******************
+
+yoterada@k8s-master:/usr/local/bin$ deis releases -a lonely-jokester
+=== lonely-jokester Releases
+v4	2017-04-26T14:09:56Z	yoterada changed healthcheck info for proc type cmd
+v3	2017-04-26T14:09:03Z	yoterada added healthcheck info for proc type cmd
+v2	2017-04-26T12:29:44Z	yoterada deployed 545623c
+v1	2017-04-26T12:26:01Z	yoterada created initial release
+
+
+yoterada@k8s-master:/usr/local/bin$ deis releases:info -a lonely-jokester v1
+=== lonely-jokester Release v1
+config:   5cbcfc03-b18a-4797-ac8c-88980705da2c
+owner:    yoterada
+created:  2017-04-26T12:26:01Z
+summary:  yoterada created initial release
+updated:  2017-04-26T12:26:01Z
+uuid:     d3775cb1-3bda-407e-95e8-7d916059aac9
+yoterada@k8s-master:/usr/local/bin$ deis releases:info -a lonely-jokester v2
+=== lonely-jokester Release v2
+build:    527df797-b8f5-4975-9778-abd427fc8bfa
+config:   5cbcfc03-b18a-4797-ac8c-88980705da2c
+owner:    yoterada
+created:  2017-04-26T12:29:44Z
+summary:  yoterada deployed 545623c
+updated:  2017-04-26T12:29:44Z
+uuid:     26dae3e6-a1e0-4c1a-9f9b-02acbdfdcdf5
+
+
+
+******************* Role Back of the Application (v4 -> v2)*******************
+
+yoterada@k8s-master:/usr/local/bin$ deis rollback v2 -a lonely-jokester
+Rolling back to v2... done, v5
+yoterada@k8s-master:/usr/local/bin$ deis releases -a lonely-jokester
+=== lonely-jokester Releases
+v5	2017-04-26T14:27:08Z	yoterada rolled back to v2
+v4	2017-04-26T14:09:56Z	yoterada changed healthcheck info for proc type cmd
+v3	2017-04-26T14:09:03Z	yoterada added healthcheck info for proc type cmd
+v2	2017-04-26T12:29:44Z	yoterada deployed 545623c
+v1	2017-04-26T12:26:01Z	yoterada created initial release
+yoterada@k8s-master:/usr/local/bin$ 
+
+
+******************* Configure the Environment Value *******************
+
+yoterada@k8s-master:/usr/local/bin$ deis config:set FOO=BAR -a lonely-jokester
+Creating config... done
+
+=== lonely-jokester Config
+FOO      BAR
+
+yoterada@k8s-master:/usr/local/bin$ deis config:set DATABASE_URL=postgres://user:pass@example.com:5432/db -a lonely-jokester
+Creating config... done
+
+=== lonely-jokester Config
+DATABASE_URL      postgres://user:pass@example.com:5432/db
+FOO               BAR
+
+
+******************* Confirm the Log Configuration *******************
+
+yoterada@k8s-master:~$ deis logs
+Error: There are currently no log messages. Please check the following things:
+1) Logger and fluentd pods are running: kubectl --namespace=deis get pods.
+2) The application is writing logs to the logger component by checking that an entry in the ring buffer was created: kubectl --namespace=deis logs <logger pod>
+3) Making sure that the container logs were mounted properly into the fluentd pod: kubectl --namespace=deis exec <fluentd pod> ls /var/log/containers
+3a) If the above command returns saying /var/log/containers cannot be found then please see the following github issue for a workaround: https://github.com/deis/logger/issues/50
+
+yoterada@k8s-master:~$ kubectl --namespace=deis get pods|grep fluentd
+deis-logger-fluentd-102qs                1/1       Running            0          4h
+deis-logger-fluentd-4fks6                1/1       Running            0          4h
+deis-logger-fluentd-5whpw                1/1       Running            0          4h
+deis-logger-fluentd-90qz6                1/1       Running            0          4h
+deis-logger-fluentd-bklkx                1/1       Running            0          4h
+deis-logger-fluentd-ckpl7                1/1       Running            0          4h
+deis-logger-fluentd-gc5hj                1/1       Running            0          4h
+deis-logger-fluentd-ll5p2                1/1       Running            0          4h
+deis-logger-fluentd-n3vgp                1/1       Running            0          4h
+deis-logger-fluentd-smlnt                1/1       Running            0          4h
+deis-logger-fluentd-zc12v                1/1       Running            0          4h
+
+yoterada@k8s-master:~$ kubectl --namespace=deis logs deis-logger-fluentd-4fks6
+2017-04-26 11:11:07 +0000 [info]: reading config file path="/opt/fluentd/conf/fluentd.conf"
+2017-04-26 11:11:07 +0000 [info]: starting fluentd-0.14.14 pid=1
+2017-04-26 11:11:07 +0000 [info]: spawn command to main:  cmdline=["/usr/bin/ruby2.3", "-Eascii-8bit:ascii-8bit", "/usr/local/bin/fluentd", "-c", "/opt/fluentd/conf/fluentd.conf", "--under-supervisor"]
+2017-04-26 11:11:08 +0000 [info]: gem 'fluent-mixin-config-placeholders' version '0.4.0'
+2017-04-26 11:11:08 +0000 [info]: gem 'fluent-mixin-plaintextformatter' version '0.2.6'
+2017-04-26 11:11:08 +0000 [info]: gem 'fluent-mixin-rewrite-tag-name' version '0.1.0'
+2017-04-26 11:11:08 +0000 [info]: gem 'fluent-plugin-deis_output' version '0.1.0'
+2017-04-26 11:11:08 +0000 [info]: gem 'fluent-plugin-elasticsearch' version '1.7.0'
+2017-04-26 11:11:08 +0000 [info]: gem 'fluent-plugin-kubernetes_metadata_filter' version '0.25.3'
+2017-04-26 11:11:08 +0000 [info]: gem 'fluent-plugin-remote_syslog' version '0.3.2'
+2017-04-26 11:11:08 +0000 [info]: gem 'fluent-plugin-sumologic-mattk42' version '0.0.4'
+2017-04-26 11:11:08 +0000 [info]: gem 'fluentd' version '0.14.14'
+2017-04-26 11:11:08 +0000 [info]: gem 'fluentd' version '0.14.13'
+2017-04-26 11:11:08 +0000 [info]: adding filter pattern="kubernetes.**" type="kubernetes_metadata"
+2017-04-26 11:11:08 +0000 [info]: adding match pattern="**" type="copy"
+2017-04-26 11:11:08 +0000 [info]: adding source type="tail"
+2017-04-26 11:11:08 +0000 [info]: #0 Oj is not installed, and failing back to Yajl for json parser
+2017-04-26 11:11:08 +0000 [info]: #0 Oj is not installed, and failing back to Yajl for json parser
+2017-04-26 11:11:08 +0000 [info]: using configuration file: <ROOT>
+  <source>
+    @type tail
+    path "/var/log/containers/*.log"
+    pos_file "/var/log/containers.log.pos"
+    tag "kubernetes.*"
+    format json
+    read_from_head true
+    <parse>
+      @type json
+    </parse>
+  </source>
+  <filter kubernetes.**>
+    @type kubernetes_metadata
+    kubernetes_url "https://10.0.0.1:443"
+    bearer_token_file "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    verify_ssl false
+  </filter>
+  <match **>
+    @type copy
+    <store>
+      @type "deis"
+    </store>
+  </match>
+</ROOT>
+2017-04-26 11:11:08 +0000 [info]: #0 starting fluentd worker pid=34 ppid=1 worker=0
+2017-04-26 11:11:08 +0000 [info]: #0 following tail of /var/log/containers/deis-registry-1792206801-smhcr_deis_POD-5415e02fd749993c9928d2a814a9da611f543d5ec33ecf2803633164afc53d66.log
+2017-04-26 11:11:08 +0000 [info]: #0 following tail of /var/log/containers/nonexistent-wildebeest-consul-1_default_nonexistent-wildebeest-consul-002541c8fdc4de0d06db5f223b0017299cb059e044dad32237f6506f075b5d71.log
+2017-04-26 11:11:08 +0000 [info]: #0 following tail of /var/log/containers/warped-boxer-kube-ops-view-1401676482-khnbd_default_kube-ops-view-99e394da5c157e5b38fac8c6699412400ee74f4e46b75541309469371f87d834.log
+2017-04-26 11:11:09 +0000 [info]: #0 following tail of /var/log/containers/deis-monitor-telegraf-j3br8_deis_deis-monitor-telegraf-38798cbfc9ad5d421d4374ddc6755308060c346ce0aab64854177a71ab7feb6b.log
+2017-04-26 11:11:09 +0000 [info]: #0 following tail of /var/log/containers/kube-proxy-2gzpw_kube-system_kube-proxy-77235c9d8cabb2101234b5e5b6a8e6118531be7065c94e6f5256f9a49fd02c16.log
+2017-04-26 11:11:09 +0000 [info]: #0 following tail of /var/log/containers/deis-controller-2265793752-t9g9v_deis_POD-0ec1c28b874272384a057763aa2540188a58c68689ec4a738a153ff09896c159.log
+2017-04-26 11:11:09 +0000 [info]: #0 following tail of /var/log/containers/nonexistent-wildebeest-consul-1_default_POD-d6021ffc2650d956501385a5a0dc5e6f70670882f570c47b02c81f8a6dc71c3b.log
+2017-04-26 11:11:09 +0000 [info]: #0 following tail of /var/log/containers/deis-logger-fluentd-4fks6_deis_deis-logger-fluentd-fd6d6141af498f090714eda0a1785a1f9e53e9231660730176d2ca15fd5e464f.log
+2017-04-26 11:11:09 +0000 [info]: #0 following tail of /var/log/containers/kube-proxy-2gzpw_kube-system_POD-5a28ff19a9704240b4311915f8895b7ac7c69e40ce12a51774044bb84edfa46c.log
+2017-04-26 11:11:09 +0000 [info]: #0 following tail of /var/log/containers/deis-monitor-telegraf-j3br8_deis_POD-8dd2b215ac66ea24bf10aa2d24a8ed3758731b31c7773d11e061e21471f08560.log
+2017-04-26 11:11:09 +0000 [info]: #0 following tail of /var/log/containers/deis-logger-fluentd-4fks6_deis_POD-8f2f9e7b8c79d807a6d808722c96d9650dd4ac4a63c1673ffebf603185b5a852.log
+2017-04-26 11:11:09 +0000 [info]: #0 following tail of /var/log/containers/deis-registry-proxy-c32jr_deis_POD-ed9113e888db296070076928277993234c8e2a42b9278663c66389275715e060.log
+2017-04-26 11:11:09 +0000 [info]: #0 following tail of /var/log/containers/warped-boxer-kube-ops-view-1401676482-khnbd_default_POD-ffa26ad9966b316a05ade963ddba821c70e7827d8b66577ad584040faa340f1d.log
+2017-04-26 11:11:09 +0000 [info]: #0 following tail of /var/log/containers/deis-registry-proxy-c32jr_deis_deis-registry-proxy-1c0a32c98e9eaa419c96cd56da55635de44eb97cf8f4e604f62bac4af6bfbc5c.log
+2017-04-26 11:11:09 +0000 [info]: #0 fluentd worker is now running worker=0
+2017-04-26 11:12:09 +0000 [info]: #0 following tail of /var/log/containers/deis-registry-1792206801-smhcr_deis_deis-registry-25ab24d515e1d11d82ddc7d3613bed18848a21f889254428964f1a4c819ce15c.log
+2017-04-26 11:12:09 +0000 [info]: #0 following tail of /var/log/containers/deis-controller-2265793752-t9g9v_deis_deis-controller-4d564b0c23fd134f9d4bc6c8d34ba6714e946f3c3445302e2a02f713c6cf1c02.log
+2017-04-26 11:13:09 +0000 [info]: #0 following tail of /var/log/containers/deis-controller-2265793752-t9g9v_deis_deis-controller-0f0a005e9b280b76564209b9d9c5da17c554f91a81fdaa132a5bd7d65135c13f.log
+2017-04-26 11:14:09 +0000 [info]: #0 following tail of /var/log/containers/deis-monitor-telegraf-j3br8_deis_deis-monitor-telegraf-17e4645c7917115c6b2e598bc1dd6b4b3a3357ddba5ff751a7ed14416f83393c.log
+Creating nsq producer (10.0.204.248:4150) for topic:logs
+
+
+yoterada@k8s-master:~$ kubectl --namespace=deis exec deis-logger-fluentd-4fks6
+error: expected 'exec POD_NAME COMMAND [ARG1] [ARG2] ... [ARGN]'.
+POD_NAME and COMMAND are required arguments for the exec command
+See 'kubectl exec -h' for help and examples.
+yoterada@k8s-master:~$ kubectl --namespace=deis exec deis-logger-fluentd-4fks6 ls /var/log/containers
+deis-controller-2265793752-t9g9v_deis_POD-0ec1c28b874272384a057763aa2540188a58c68689ec4a738a153ff09896c159.log
+deis-controller-2265793752-t9g9v_deis_deis-controller-0f0a005e9b280b76564209b9d9c5da17c554f91a81fdaa132a5bd7d65135c13f.log
+deis-controller-2265793752-t9g9v_deis_deis-controller-4d564b0c23fd134f9d4bc6c8d34ba6714e946f3c3445302e2a02f713c6cf1c02.log
+deis-logger-fluentd-4fks6_deis_POD-8f2f9e7b8c79d807a6d808722c96d9650dd4ac4a63c1673ffebf603185b5a852.log
+deis-logger-fluentd-4fks6_deis_deis-logger-fluentd-fd6d6141af498f090714eda0a1785a1f9e53e9231660730176d2ca15fd5e464f.log
+deis-monitor-telegraf-j3br8_deis_POD-8dd2b215ac66ea24bf10aa2d24a8ed3758731b31c7773d11e061e21471f08560.log
+deis-monitor-telegraf-j3br8_deis_deis-monitor-telegraf-17e4645c7917115c6b2e598bc1dd6b4b3a3357ddba5ff751a7ed14416f83393c.log
+deis-monitor-telegraf-j3br8_deis_deis-monitor-telegraf-38798cbfc9ad5d421d4374ddc6755308060c346ce0aab64854177a71ab7feb6b.log
+deis-registry-1792206801-smhcr_deis_POD-5415e02fd749993c9928d2a814a9da611f543d5ec33ecf2803633164afc53d66.log
+deis-registry-1792206801-smhcr_deis_deis-registry-25ab24d515e1d11d82ddc7d3613bed18848a21f889254428964f1a4c819ce15c.log
+deis-registry-proxy-c32jr_deis_POD-ed9113e888db296070076928277993234c8e2a42b9278663c66389275715e060.log
+deis-registry-proxy-c32jr_deis_deis-registry-proxy-1c0a32c98e9eaa419c96cd56da55635de44eb97cf8f4e604f62bac4af6bfbc5c.log
+kube-proxy-2gzpw_kube-system_POD-5a28ff19a9704240b4311915f8895b7ac7c69e40ce12a51774044bb84edfa46c.log
+kube-proxy-2gzpw_kube-system_kube-proxy-77235c9d8cabb2101234b5e5b6a8e6118531be7065c94e6f5256f9a49fd02c16.log
+nonexistent-wildebeest-consul-1_default_POD-d6021ffc2650d956501385a5a0dc5e6f70670882f570c47b02c81f8a6dc71c3b.log
+nonexistent-wildebeest-consul-1_default_nonexistent-wildebeest-consul-002541c8fdc4de0d06db5f223b0017299cb059e044dad32237f6506f075b5d71.log
+warped-boxer-kube-ops-view-1401676482-khnbd_default_POD-ffa26ad9966b316a05ade963ddba821c70e7827d8b66577ad584040faa340f1d.log
+warped-boxer-kube-ops-view-1401676482-khnbd_default_kube-ops-view-99e394da5c157e5b38fac8c6699412400ee74f4e46b75541309469371f87d834.log
+yoterada@k8s-master:~$ 
+
+
+******************* List of All Applications *******************
+
+yoterada@k8s-master:~$ deis apps:list
+=== Apps
+earthy-vineyard
+iconic-quantity
+lonely-jokester
+
+
+******************* Configure the WhiteList IP Address(Restrict the access) *******************
+
+deis whitelist:add 10.0.1.0/24,121.212.121.212 -a lonely-jokester
+Adding 10.0.1.0/24,121.212.121.212 to lonely-jokester whitelist...done
+
+
+******************* Configure the Auto Scale for Application *******************
+
+yoterada@k8s-master:~$ deis autoscale:set cmd --min=3 --max=8 --cpu-percent=75 -a lonely-jokester
+Applying autoscale settings for process type cmd on lonely-jokester... done
+yoterada@k8s-master:~$ deis autoscale:list -a lonely-jokester
+=== lonely-jokester Autoscale
+
+--- cmd:
+Min Replicas: 3
+Max Replicas: 8
+CPU: 75%
+yoterada@k8s-master:~$ 
+
+
+******************* Restart specific instance *******************
+
+yoterada@k8s-master:~$ deis ps:restart lonely-jokester-cmd-3732366263-ghpdt -a lonely-jokester
+Restarting processes... but first, coffee!
+..o
+
+******************* Confirm Log *******************
+
+yoterada@k8s-master:~$ deis logs -a lonely-jokester | tail
+2017-04-26T15:45:00+00:00 deis[controller]: INFO 1 out of 1 pods are in service
+2017-04-26T15:45:38+00:00 deis[controller]: INFO waiting for 1 pods in lonely-jokester namespace to be in services (120s timeout)
+2017-04-26T15:45:50+00:00 deis[controller]: INFO waited 10s and 0 pods are in service
+2017-04-26T15:46:01+00:00 deis[controller]: INFO waited 20s and 0 pods are in service
+2017-04-26T15:46:13+00:00 deis[controller]: INFO waited 30s and 0 pods are in service
+2017-04-26T15:46:16+00:00 lonely-jokester[run.v9.p8abe]: shutting down, got signal: Terminated
+2017-04-26T15:46:17+00:00 deis[controller]: INFO 1 out of 1 pods are in service
+
+
+******************* Routing for internal Private Application *******************
+
+https://deis.com/blog/2016/private-applications-on-deis-workflow/
+
+
+******************** Segregation the Runtime Environment(Production/Staging) (Preparation)*********************************
+アプリケーション実行環境の分離 : Segregation
+
+yoterada@k8s-master:~$ kubectl get nodes
+NAME                    STATUS                     AGE
+k8s-agent-491d5c0d-0    Ready                      5d
+k8s-agent-491d5c0d-1    Ready                      5d
+k8s-agent-491d5c0d-2    Ready                      5d
+k8s-agent-491d5c0d-3    Ready                      5d
+k8s-agent-491d5c0d-4    Ready                      1d
+k8s-agent-491d5c0d-5    Ready                      1d
+k8s-agent-491d5c0d-6    Ready                      1d
+k8s-agent-491d5c0d-7    Ready                      1d
+k8s-agent-491d5c0d-8    Ready                      1d
+k8s-agent-491d5c0d-9    Ready                      1d
+k8s-master-491d5c0d-0   Ready,SchedulingDisabled   5d
+
+******************** Segregation the Runtime Environment(5-9: Production/0-4:Staging) *********************************
+
+yoterada@k8s-master:~$ kubectl label nodes k8s-agent-491d5c0d-9 environment=production
+node "k8s-agent-491d5c0d-9" labeled
+yoterada@k8s-master:~$ kubectl label nodes k8s-agent-491d5c0d-8 environment=production
+node "k8s-agent-491d5c0d-8" labeled
+yoterada@k8s-master:~$ kubectl label nodes k8s-agent-491d5c0d-7 environment=production 
+node "k8s-agent-491d5c0d-7" labeled
+yoterada@k8s-master:~$ kubectl label nodes k8s-agent-491d5c0d-6 environment=production 
+node "k8s-agent-491d5c0d-6" labeled
+yoterada@k8s-master:~$ kubectl label nodes k8s-agent-491d5c0d-5 environment=production 
+node "k8s-agent-491d5c0d-5" labeled
+yoterada@k8s-master:~$ kubectl label nodes k8s-agent-491d5c0d-4 environment=staging
+node "k8s-agent-491d5c0d-4" labeled
+yoterada@k8s-master:~$ kubectl label nodes k8s-agent-491d5c0d-3 environment=staging
+node "k8s-agent-491d5c0d-3" labeled
+yoterada@k8s-master:~$ kubectl label nodes k8s-agent-491d5c0d-2 environment=staging
+node "k8s-agent-491d5c0d-2" labeled
+yoterada@k8s-master:~$ kubectl label nodes k8s-agent-491d5c0d-1 environment=staging
+node "k8s-agent-491d5c0d-1" labeled
+yoterada@k8s-master:~$ kubectl label nodes k8s-agent-491d5c0d-0 environment=staging
+node "k8s-agent-491d5c0d-0" labeled
+
+******************** Segregation the Runtime Environment (TAG:Production) *********************************
+
+yoterada@k8s-master:~$ deis tags:set environment=production -a lonely-jokester
+Applying tags... done
+
+=== lonely-jokester Tags
+environment     production
+
+******************** Segregation the Runtime Environment (TAG:Staging) *********************************
+
+yoterada@k8s-master:~$ deis tags:set environment=staging -a lonely-jokester
+Applying tags... done
+
+=== lonely-jokester Tags
+environment     staging
+
+
+******************** Scale External Router for Production Env *********************************
+本番環境用にルータの pod が死んだ時にそなえ
+
+yoterada@k8s-master:~$ kubectl --namespace=deis scale --replicas=2 deployment/deis-router
+deployment "deis-router" scaled
+
+ルータがどのノードで稼働しているかを確認
+yoterada@k8s-master:~$  kubectl --namespace=deis describe pod deis-router | grep Node
+Node:		k8s-agent-491d5c0d-6/10.240.0.9
+Node:		k8s-agent-491d5c0d-1/10.240.0.7
+
+
+******************* (HELM) Install Jenkins *******************
+
+yoterada@k8s-master:~$ helm install stable/jenkins --namespace common
+NAME:   hasty-fish
+LAST DEPLOYED: Thu May  4 17:58:22 2017
+NAMESPACE: common
+STATUS: DEPLOYED
+
+RESOURCES:
+==> v1/Service
+NAME                CLUSTER-IP   EXTERNAL-IP  PORT(S)                         AGE
+hasty-fish-jenkins  10.0.108.49  <pending>    8080:30932/TCP,50000:32622/TCP  1s
+
+==> extensions/v1beta1/Deployment
+NAME                DESIRED  CURRENT  UP-TO-DATE  AVAILABLE  AGE
+hasty-fish-jenkins  1        1        1           0          1s
+
+==> v1/Secret
+NAME                TYPE    DATA  AGE
+hasty-fish-jenkins  Opaque  2     1s
+
+==> v1/ConfigMap
+NAME                DATA  AGE
+hasty-fish-jenkins  3     1s
+
+==> v1/PersistentVolumeClaim
+NAME                STATUS   VOLUME  CAPACITY  ACCESSMODES  AGE
+hasty-fish-jenkins  Pending  1s
+
+
+NOTES:
+1. Get your 'admin' user password by running:
+  printf $(kubectl get secret --namespace common hasty-fish-jenkins -o jsonpath="{.data.jenkins-admin-password}" | base64 --decode);echo
+2. Get the Jenkins URL to visit by running these commands in the same shell:
+  NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+        You can watch the status of by running 'kubectl get svc --namespace common -w hasty-fish-jenkins'
+  export SERVICE_IP=$(kubectl get svc hasty-fish-jenkins --namespace common --template "{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}")
+  echo http://$SERVICE_IP:8080/login
+
+3. Login with the password from step 1 and the username: admin
+
+For more information on running Jenkins on Kubernetes, visit:
+https://cloud.google.com/solutions/jenkins-on-container-engine
+
+
+yoterada@k8s-master:~$ kubectl get secret --namespace common hasty-fish-jenkins -o jsonpath="{.data.jenkins-admin-password}" | base64 --decode
+hgx8QIGF0H
+
+yoterada@k8s-master:~$ kubectl get svc hasty-fish-jenkins --namespace common --template "{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}"
+52.175.153.9
+
+yoterada@k8s-master:~$ kubectl get svc --namespace common -w hasty-fish-jenkins
+NAME                 CLUSTER-IP    EXTERNAL-IP    PORT(S)                          AGE
+hasty-fish-jenkins   10.0.108.49   52.175.153.9   8080:30932/TCP,50000:32622/TCP   3m
+
+
+******************* (HELM) Install Wordpress & MariaDB *******************
+
+yoterada@k8s-master:~$ helm install stable/wordpress
+NAME:   singed-mandrill
+LAST DEPLOYED: Tue Apr 25 12:53:30 2017
+NAMESPACE: default
+STATUS: DEPLOYED
+
+RESOURCES:
+==> v1/ConfigMap
+NAME                     DATA  AGE
+singed-mandrill-mariadb  1     2s
+
+==> v1/PersistentVolumeClaim
+NAME                       STATUS   VOLUME  CAPACITY  ACCESSMODES  AGE
+singed-mandrill-mariadb    Pending  2s
+singed-mandrill-wordpress  Pending  2s
+
+==> v1/Service
+NAME                       CLUSTER-IP   EXTERNAL-IP  PORT(S)                     AGE
+singed-mandrill-wordpress  10.0.128.89  <pending>    80:30954/TCP,443:31904/TCP  1s
+singed-mandrill-mariadb    10.0.31.25   <none>       3306/TCP                    1s
+
+==> extensions/v1beta1/Deployment
+NAME                       DESIRED  CURRENT  UP-TO-DATE  AVAILABLE  AGE
+singed-mandrill-wordpress  1        1        1           0          1s
+singed-mandrill-mariadb    1        1        1           0          1s
+
+==> v1/Secret
+NAME                       TYPE    DATA  AGE
+singed-mandrill-wordpress  Opaque  3     2s
+singed-mandrill-mariadb    Opaque  2     2s
+
+
+NOTES:
+1. Get the WordPress URL:
+
+  NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+        Watch the status with: 'kubectl get svc --namespace default -w singed-mandrill-wordpress'
+
+  export SERVICE_IP=$(kubectl get svc --namespace default singed-mandrill-wordpress -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+  echo http://$SERVICE_IP/admin
+
+2. Login with the following credentials to see your blog
+
+  echo Username: user
+  echo Password: $(kubectl get secret --namespace default singed-mandrill-wordpress -o jsonpath="{.data.wordpress-password}" | base64 --decode)
+
+******************* (HELM) Install Wordpress & MariaDB (GetURL) *******************
+
+yoterada@k8s-master:~$ kubectl get svc --namespace default -w singed-mandrill-wordpress
+NAME                        CLUSTER-IP    EXTERNAL-IP    PORT(S)                      AGE
+singed-mandrill-wordpress   10.0.128.89   40.74.123.62   80:30954/TCP,443:31904/TCP   9m
+
+
+******************* (HELM) Install Wordpress & MariaDB (Get Password)*******************
+
+yoterada@k8s-master:~$ kubectl get secret --namespace default singed-mandrill-wordpress -o jsonpath="{.data.wordpress-password}" | base64 --decode
+RABQU4mkfAyoterada@k8s-master:~$ 
+
+
+
+yoterada@k8s-master:~$ helm status singed-mandrill
+LAST DEPLOYED: Tue Apr 25 12:53:30 2017
+NAMESPACE: default
+STATUS: DEPLOYED
+
+RESOURCES:
+==> v1/Secret
+NAME                       TYPE    DATA  AGE
+singed-mandrill-wordpress  Opaque  3     7m
+singed-mandrill-mariadb    Opaque  2     7m
+
+==> v1/ConfigMap
+NAME                     DATA  AGE
+singed-mandrill-mariadb  1     7m
+
+==> v1/PersistentVolumeClaim
+NAME                       STATUS  VOLUME                                    CAPACITY  ACCESSMODES  AGE
+singed-mandrill-mariadb    Bound   pvc-2f9a36ed-29b6-11e7-bf41-000d3a40a4e1  8Gi       RWO          7m
+singed-mandrill-wordpress  Bound   pvc-2fa23c07-29b6-11e7-bf41-000d3a40a4e1  10Gi      RWO          7m
+
+==> v1/Service
+NAME                       CLUSTER-IP   EXTERNAL-IP   PORT(S)                     AGE
+singed-mandrill-wordpress  10.0.128.89  40.74.123.62  80:30954/TCP,443:31904/TCP  7m
+singed-mandrill-mariadb    10.0.31.25   <none>        3306/TCP                    7m
+
+==> extensions/v1beta1/Deployment
+NAME                       DESIRED  CURRENT  UP-TO-DATE  AVAILABLE  AGE
+singed-mandrill-wordpress  1        1        1           1          7m
+singed-mandrill-mariadb    1        1        1           1          7m
+
+
+NOTES:
+1. Get the WordPress URL:
+
+  NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+        Watch the status with: 'kubectl get svc --namespace default -w singed-mandrill-wordpress'
+
+  export SERVICE_IP=$(kubectl get svc --namespace default singed-mandrill-wordpress -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+  echo http://$SERVICE_IP/admin
+
+2. Login with the following credentials to see your blog
+
+  echo Username: user
+  echo Password: $(kubectl get secret --namespace default singed-mandrill-wordpress -o jsonpath="{.data.wordpress-password}" | base64 --decode)
+
+yoterada@k8s-master:~$
+
+
+******************* (HELM) Install Chaos Kube *******************
+
+yoterada@k8s-master:~$ helm install stable/chaoskube
+NAME:   incindiary-worm
+LAST DEPLOYED: Tue Apr 25 13:29:24 2017
+NAMESPACE: default
+STATUS: DEPLOYED
+
+RESOURCES:
+==> extensions/v1beta1/Deployment
+NAME                       DESIRED  CURRENT  UP-TO-DATE  AVAILABLE  AGE
+incindiary-worm-chaoskube  1        0        0           0          0s
+
+
+NOTES:
+chaoskube is running and will kill arbitrary pods every 10m.
+
+You can follow the logs to see what chaoskube does:
+
+    POD=$(kubectl get pods -l app=incindiary-worm-chaoskube --namespace default --output name)
+    kubectl logs -f $POD --namespace=default
+
+You are running in dry-run mode. No pod is actually terminated.
+
+
+yoterada@k8s-master:~$ kubectl logs -f pod/incindiary-worm-chaoskube-3748382351-kdq4h --namespace=default
+time="2017-04-25T13:30:18Z" level=info msg="Dry run enabled. I won't kill anything. Use --no-dry-run when you're ready." 
+time="2017-04-25T13:30:18Z" level=info msg="Targeting cluster at https://10.0.0.1:443" 
+time="2017-04-25T13:30:23Z" level=info msg="Killing pod kube-system/kube-proxy-jqd70" 
+
+******************* (HELM) Install MySQL *******************
+
+yoterada@k8s-master:~/target$ helm install stable/mysql 
+NAME:   looping-angelfish
+LAST DEPLOYED: Tue May  2 01:44:35 2017
+NAMESPACE: default
+STATUS: DEPLOYED
+
+RESOURCES:
+==> extensions/v1beta1/Deployment
+NAME                     DESIRED  CURRENT  UP-TO-DATE  AVAILABLE  AGE
+looping-angelfish-mysql  1        1        1           0          0s
+
+==> v1/Secret
+NAME                     TYPE    DATA  AGE
+looping-angelfish-mysql  Opaque  2     1s
+
+==> v1/PersistentVolumeClaim
+NAME                     STATUS   VOLUME  CAPACITY  ACCESSMODES  AGE
+looping-angelfish-mysql  Pending  1s
+
+==> v1/Service
+NAME                     CLUSTER-IP   EXTERNAL-IP  PORT(S)   AGE
+looping-angelfish-mysql  10.0.244.94  <none>       3306/TCP  0s
+
+
+NOTES:
+MySQL can be accessed via port 3306 on the following DNS name from within your cluster:
+looping-angelfish-mysql.default.svc.cluster.local
+
+To get your root password run:
+
+    kubectl get secret --namespace default looping-angelfish-mysql -o jsonpath="{.data.mysql-root-password}" | base64 --decode; echo
+
+To connect to your database:
+
+1. Run an Ubuntu pod that you can use as a client:
+
+    kubectl run -i --tty ubuntu --image=ubuntu:16.04 --restart=Never -- bash -il
+
+2. Install the mysql client:
+
+    $ apt-get update && apt-get install mysql-client -y
+
+3. Connect using the mysql cli, then provide your password:
+    $ mysql -h looping-angelfish-mysql -p
+
+yoterada@k8s-master:~/target$ kubectl get secret --namespace default looping-angelfish-mysql -o jsonpath="{.data.mysql-root-password}" | base64 --decode; echo
+QbPidi91od
+
+
+yoterada@k8s-master:~$ kubectl run -i --tty ubuntu --image=ubuntu:16.04 --restart=Never -- bash -il
+Waiting for pod default/ubuntu to be running, status is Pending, pod ready: false
+Waiting for pod default/ubuntu to be running, status is Pending, pod ready: false
+If you don't see a command prompt, try pressing enter.
+root@ubuntu:/# 
+root@ubuntu:/# apt-get update && apt-get install mysql-client -y
+Get:1 http://security.ubuntu.com/ubuntu xenial-security InRelease [102 kB]
+Get:2 http://archive.ubuntu.com/ubuntu xenial InRelease [247 kB]
+Get:3 http://security.ubuntu.com/ubuntu xenial-security/universe Sources [29.7 kB]
+Get:4 http://security.ubuntu.com/ubuntu xenial-security/main amd64 Packages [318 kB]
+
+
+update-alternatives: using /etc/mysql/my.cnf.fallback to provide /etc/mysql/my.cnf (my.cnf) in auto mode
+Setting up mysql-client-5.7 (5.7.17-0ubuntu0.16.04.2) ...
+Setting up mysql-client (5.7.17-0ubuntu0.16.04.2) ...
+Processing triggers for libc-bin (2.23-0ubuntu7) ...
+root@ubuntu:/# 
+root@ubuntu:/# mysql -h wintering-iguana-mysql -p           
+Enter password: 
+Welcome to the MySQL monitor.  Commands end with ; or \g.
+Your MySQL connection id is 109
+Server version: 5.7.14 MySQL Community Server (GPL)
+
+Copyright (c) 2000, 2016, Oracle and/or its affiliates. All rights reserved.
+
+Oracle is a registered trademark of Oracle Corporation and/or its
+affiliates. Other names may be trademarks of their respective
+owners.
+
+Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
+
+mysql> 
+
+mysql> show variables like "chara%";
++--------------------------+----------------------------+
+| Variable_name            | Value                      |
++--------------------------+----------------------------+
+| character_set_client     | latin1                     |
+| character_set_connection | latin1                     |
+| character_set_database   | utf8                       |
+| character_set_filesystem | binary                     |
+| character_set_results    | latin1                     |
+| character_set_server     | latin1                     |
+| character_set_system     | utf8                       |
+| character_sets_dir       | /usr/share/mysql/charsets/ |
++--------------------------+----------------------------+
+8 rows in set (0.00 sec)
+
+mysql> set character_set_client utf8
+    -> ;
+ERROR 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'utf8' at line 1
+mysql> set character_set_client=utf8
+    -> ;
+Query OK, 0 rows affected (0.00 sec)
+
+mysql> set character_set_connection=utf8
+    -> ;
+Query OK, 0 rows affected (0.00 sec)
+
+mysql> set  character_set_results=utf8;
+Query OK, 0 rows affected (0.00 sec)
+
+mysql> set character_set_server=utf8;
+Query OK, 0 rows affected (0.00 sec)
+
+mysql> show variables like "chara%";
++--------------------------+----------------------------+
+| Variable_name            | Value                      |
++--------------------------+----------------------------+
+| character_set_client     | utf8                       |
+| character_set_connection | utf8                       |
+| character_set_database   | utf8                       |
+| character_set_filesystem | binary                     |
+| character_set_results    | utf8                       |
+| character_set_server     | utf8                       |
+| character_set_system     | utf8                       |
+| character_sets_dir       | /usr/share/mysql/charsets/ |
++--------------------------+----------------------------+
+8 rows in set (0.01 sec)
+mysql> create database artist;
+Query OK, 1 row affected (0.01 sec)
+
+mysql> use artist;
+Database changed
+mysql> show variables like "chara%";
++--------------------------+----------------------------+
+| Variable_name            | Value                      |
++--------------------------+----------------------------+
+| character_set_client     | utf8                       |
+| character_set_connection | utf8                       |
+| character_set_database   | utf8                       |
+| character_set_filesystem | binary                     |
+| character_set_results    | utf8                       |
+| character_set_server     | utf8                       |
+| character_set_system     | utf8                       |
+| character_sets_dir       | /usr/share/mysql/charsets/ |
++--------------------------+----------------------------+
+8 rows in set (0.00 sec)
+
+JDBC Connection String(接続文字列)
+jdbc:mysql://looping-angelfish-mysql.default.svc.cluster.local:3306/artist?zeroDateTimeBehavior=convertToNull&useUnicode=yes&characterEncoding=UTF-8&useSSL=false
+
+
+Ubuntu の Docker インスタンスの再起動
+yoterada@k8s-master:~$ kubectl run -i --tty ubuntu --image=ubuntu:16.04 -- bash -il
+
+
+
+MySQL Scale
+yoterada@k8s-master:~$ kubectl get ReplicaSet
+NAME                                    DESIRED   CURRENT   READY     AGE
+face-2088431659                         1         1         1         7d
+hystrix-dashboard-470214063             1         1         1         6d
+incindiary-worm-chaoskube-3748382351    1         1         1         6d
+looping-angelfish-mysql-1192824607      1         1         1         5h
+piquant-ferrit-jenkins-3038542498       1         1         1         6d
+singed-mandrill-mariadb-1160462697      1         1         1         6d
+singed-mandrill-wordpress-4090252630    1         1         1         6d
+turbine-server-1836006665               1         1         1         6d
+ubuntu-469343845                        1         1         1         5h
+warped-boxer-kube-ops-view-1401676482   1         1         1         6d
+
+yoterada@k8s-master:~$ kubectl scale --replicas=3 replicaset looping-angelfish-mysql-1192824607
+replicaset "looping-angelfish-mysql-1192824607" scaled
+
+
+
+
+
+******************* (HELM) Install RabbitMQ *******************
+
+yoterada@k8s-master:~$ helm install stable/rabbitmq --namespace common
+NAME:   intent-sloth
+LAST DEPLOYED: Thu May  4 19:04:02 2017
+NAMESPACE: common
+STATUS: DEPLOYED
+
+RESOURCES:
+==> extensions/v1beta1/Deployment
+NAME                   DESIRED  CURRENT  UP-TO-DATE  AVAILABLE  AGE
+intent-sloth-rabbitmq  1        1        1           0          0s
+
+==> v1/Secret
+NAME                   TYPE    DATA  AGE
+intent-sloth-rabbitmq  Opaque  2     1s
+
+==> v1/PersistentVolumeClaim
+NAME                   STATUS   VOLUME  CAPACITY  ACCESSMODES  AGE
+intent-sloth-rabbitmq  Pending  0s
+
+==> v1/Service
+NAME                   CLUSTER-IP    EXTERNAL-IP  PORT(S)                                AGE
+intent-sloth-rabbitmq  10.0.208.228  <none>       4369/TCP,5672/TCP,25672/TCP,15672/TCP  0s
+
+
+NOTES:
+
+** P.S. RabbitMQ may take a few minutes to become available. Please be patient. **
+
+The RabbitMQ AMQP port 5672 can be accessed on the following DNS name from within your cluster: intent-sloth-rabbitmq.common.svc.cluster.local
+
+  echo Username      : user
+  echo Password      : $(kubectl get secret --namespace common intent-sloth-rabbitmq -o jsonpath="{.data.rabbitmq-password}" | base64 --decode)
+  echo ErLang Cookie : $(kubectl get secret --namespace common intent-sloth-rabbitmq -o jsonpath="{.data.rabbitmq-erlang-cookie}" | base64 --decode)
+
+To Access the RabbitMQ Management interface:
+
+  export POD_NAME=$(kubectl get pods --namespace common -l "app=intent-sloth-rabbitmq" -o jsonpath="{.items[0].metadata.name}")
+  echo URL : http://127.0.0.1:15672
+  kubectl port-forward $POD_NAME 15672:15672
+
+
+Password :
+yoterada@k8s-master:~$ kubectl get secret --namespace common intent-sloth-rabbitmq -o jsonpath="{.data.rabbitmq-password}" | base64 --decode
+uLll6ckMpQ
+
+ErLang Cookie:
+yoterada@k8s-master:~$ kubectl get secret --namespace common intent-sloth-rabbitmq -o jsonpath="{.data.rabbitmq-erlang-cookie}" | base64 --decode
+c4Z1jDIwjRaEagyhRFb1wsPqRhAYxiNp
+
+
+Pod Name: 
+yoterada@k8s-master:~$ kubectl get pods --namespace common -l "app=intent-sloth-rabbitmq" -o jsonpath="{.items[0].metadata.name}"
+intent-sloth-rabbitmq-1084106063-gzsk9
+
+
+ローカルホストで
+Yoshio-no-MacBook-Pro:.ssh yoterada$ ssh -fNL 15672:localhost:15672  yoterada@yoshio3mgmt.japanwest.cloudapp.azure.com -A -i azure-acs-k8s
+
+
+yoterada@k8s-master:~$ kubectl port-forward  intent-sloth-rabbitmq-1084106063-gzsk9 15672:15672 --namespace common
+Forwarding from 127.0.0.1:15672 -> 15672
+Forwarding from [::1]:15672 -> 15672
+
+
+Admin Console
+http://127.0.0.1:15672
+User : user
+Password : uLll6ckMpQ
+
+
+
+******************* (HELM) Install Consul *******************
+
+yoterada@k8s-master:~$ helm install stable/consul --namespace common
+NAME:   terrific-dingo
+LAST DEPLOYED: Thu May  4 18:42:22 2017
+NAMESPACE: common
+STATUS: DEPLOYED
+
+RESOURCES:
+==> v1/Secret
+NAME                              TYPE    DATA  AGE
+terrific-dingo-consul-gossip-key  Opaque  1     1s
+
+==> v1/Service
+NAME                      CLUSTER-IP   EXTERNAL-IP  PORT(S)                                                                  AGE
+terrific-dingo-consul-ui  10.0.76.165  <nodes>      8500:31826/TCP                                                           1s
+terrific-dingo-consul     None         <none>       8500/TCP,8400/TCP,8301/TCP,8301/UDP,8302/TCP,8302/UDP,8300/TCP,8600/TCP  1s
+
+==> apps/v1beta1/StatefulSet
+NAME                   DESIRED  CURRENT  AGE
+terrific-dingo-consul  3        1        1s
+
+
+NOTES:
+1. Watch all cluster members come up.
+  $ kubectl get pods --namespace=common -w
+2. Confirm consul cluster is healthy
+  $ kubectl exec terrific-dingo-consul-0 consul members --namespace=common | grep server
+
+
+yoterada@k8s-master:~$ kubectl exec terrific-dingo-consul-0 consul members --namespace=common | grep server
+terrific-dingo-consul-0  10.244.6.28:8301  alive   server  0.7.5  2         dc1
+terrific-dingo-consul-1  10.244.1.26:8301  alive   server  0.7.5  2         dc1
+terrific-dingo-consul-2  10.244.8.29:8301  alive   server  0.7.5  2         dc1
+
+yoterada@k8s-master:~$ kubectl get secret --namespace common 
+NAME                               TYPE                                  DATA      AGE
+default-token-h214b                kubernetes.io/service-account-token   3         1h
+hasty-fish-jenkins                 Opaque                                2         55m
+mangy-dragon-grafana               Opaque                                2         37m
+terrific-dingo-consul-gossip-key   Opaque                                1         11m
+
+yoterada@k8s-master:~$ kubectl get secret --namespace common terrific-dingo-consul-gossip-key -o json
+{
+    "apiVersion": "v1",
+    "data": {
+        "gossip-key": "M1kxOTFTSEZ4Wk9NTklPS1VyU1M1cXd4"
+    },
+    "kind": "Secret",
+    "metadata": {
+        "creationTimestamp": "2017-05-04T18:42:23Z",
+        "name": "terrific-dingo-consul-gossip-key",
+        "namespace": "common",
+        "resourceVersion": "2318265",
+        "selfLink": "/api/v1/namespaces/common/secrets/terrific-dingo-consul-gossip-key",
+        "uid": "6981b468-30f9-11e7-bf41-000d3a40a4e1"
+    },
+    "type": "Opaque"
+}
+yoterada@k8s-master:~$ kubectl get secret --namespace common terrific-dingo-consul-gossip-key -o jsonpath="{.data.gossip-key}" | base64 --decode
+3Y191SHFxZOMNIOKUrSS5qwx
+
+
+yoterada@k8s-master:~$ kubectl get pods --namespace common |grep consul
+terrific-dingo-consul-0                                       1/1       Running   0          15m
+terrific-dingo-consul-1                                       1/1       Running   0          12m
+terrific-dingo-consul-2                                       1/1       Running   0          11m
+
+yoterada@k8s-master:~$ kubectl get services --namespace common |grep consul
+terrific-dingo-consul                        None           <none>         8500/TCP,8400/TCP,8301/TCP,8301/UDP,8302/TCP,8302/UDP,8300/TCP,8600/TCP   16m
+terrific-dingo-consul-ui                     10.0.76.165    <nodes>        8500:31826/TCP                                                            16m
+y
+
+yoterada@k8s-master:~$ kubectl --namespace common port-forward terrific-dingo-consul-0 8500
+Forwarding from 127.0.0.1:8500 -> 8500
+Forwarding from [::1]:8500 -> 8500
+
+
+From Local 
+$ ssh -fNL 8500:localhost:8500 yoterada@yoshio3mgmt.japanwest.cloudapp.azure.com  -i azure-acs-k8s
+
+Access to following
+http://localhost:8500/ui/#/dc1/services
+
+
+******************* (HELM) Confirm the repository *******************
+
+yoterada@k8s-master:~$ helm repo list
+NAME  	URL                                             
+stable	https://kubernetes-charts.storage.googleapis.com
+local 	http://127.0.0.1:8879/charts                    
+deis  	https://charts.deis.com/workflow 
+
+
+
+
+******************* (deis) Install Nexus3 *******************
+
+yoterada@k8s-master:~/DevOps/devopskube/charts$ deis login http://deis.000.111.222.333.nip.io
+username: yoterada
+password: 
+Logged in as yoterada
+Configuration file written to /home/yoterada/.deis/client.json
+yoterada@k8s-master:~/DevOps/devopskube/charts$ deis create nexus3
+Creating Application... done, created nexus3
+Git remote deis successfully created for app nexus3.
+yoterada@k8s-master:~/DevOps/devopskube/charts$ deis pull sonatype/nexus3:latest
+Creating build... done
+
+Goto 
+http://nexus3.000.111.222.333.nip.io/#admin/repository/repositories
+
+Expand the Body Size of DEIS Router
+
+$ kubectl --namespace=deis annotate deployments/deis-router router.deis.io/nginx.bodySize="100m"
+
+Upload File by using Maven Command(need configuration of ~/.m2/settings.xml)
+
+$ mvn deploy:deploy-file -DgroupId=fish.payara.extras -DartifactId=payara-micro -Dversion=4.1.1.172-pre -Dpackaging=jar -Dfile=payara-micro-prerelease.jar -DgeneratePom=true -DrepositoryId=nexus3-repository -Durl=http://nexus3.000.111.222.333.nip.io/repository/yoshio3-maven-repo/
+
+Picked up JAVA_TOOL_OPTIONS: -Dfile.encoding=UTF-8
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] ------------------------------------------------------------------------
+[INFO] Building OrderService-MSA 1.0-SNAPSHOT
+[INFO] ------------------------------------------------------------------------
+[INFO] 
+[INFO] --- maven-deploy-plugin:2.7:deploy-file (default-cli) @ OrderService-MSA ---
+Uploading: http://nexus3.000.111.222.333.nip.io/repository/yoshio3-maven-repo/fish/payara/extras/payara-micro/4.1.1.172-pre/payara-micro-4.1.1.172-pre.jar
+Uploaded: http://nexus3.000.111.222.333.nip.io/repository/yoshio3-maven-repo/fish/payara/extras/payara-micro/4.1.1.172-pre/payara-micro-4.1.1.172-pre.jar (64 MB at 2.1 MB/s)
+Uploading: http://nexus3.000.111.222.333.nip.io/repository/yoshio3-maven-repo/fish/payara/extras/payara-micro/4.1.1.172-pre/payara-micro-4.1.1.172-pre.pom
+Uploaded: http://nexus3.000.111.222.333.nip.io/repository/yoshio3-maven-repo/fish/payara/extras/payara-micro/4.1.1.172-pre/payara-micro-4.1.1.172-pre.pom (411 B at 2.1 kB/s)
+Downloading: http://nexus3.000.111.222.333.nip.io/repository/yoshio3-maven-repo/fish/payara/extras/payara-micro/maven-metadata.xml
+Uploading: http://nexus3.000.111.222.333.nip.io/repository/yoshio3-maven-repo/fish/payara/extras/payara-micro/maven-metadata.xml
+Uploaded: http://nexus3.000.111.222.333.nip.io/repository/yoshio3-maven-repo/fish/payara/extras/payara-micro/maven-metadata.xml (326 B at 2.1 kB/s)
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time: 31.932 s
+[INFO] Finished at: 2017-05-09T23:06:55+09:00
+[INFO] Final Memory: 13M/311M
+[INFO] ------------------------------------------------------------------------
+Yoshio-no-MacBook-Pro:OrderService-MSA yoterada$ 
+
+
+
+~/.m2/settings.xml
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+<settings>
+    <servers>
+        <server>
+            <id>nexus3-repository</id>
+            <username>yosshi</username> <!-- リポジトリのメンテナンスユーザ -->
+            <password>password</password>
+        </server>
+    </servers>
+</settings>
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+pom.xml
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    <distributionManagement>
+        <repository>
+            <id>nexus3-repository</id>
+            <url>http://nexus3.000.111.222.333.nip.io/repository/yoshio3-maven-repo/</url>
+        </repository>
+    </distributionManagement>
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+
+******************* (HELM) Install MongoDB *******************
+
+
+yoterada@k8s-master:~$ helm install stable/mongodb  --namespace common
+NAME:   unhinged-mink
+LAST DEPLOYED: Sat May  6 06:07:09 2017
+NAMESPACE: common
+STATUS: DEPLOYED
+
+RESOURCES:
+==> v1/Secret
+NAME                   TYPE    DATA  AGE
+unhinged-mink-mongodb  Opaque  2     1s
+
+==> v1/PersistentVolumeClaim
+NAME                   STATUS   VOLUME  CAPACITY  ACCESSMODES  AGE
+unhinged-mink-mongodb  Pending  1s
+
+==> v1/Service
+NAME                   CLUSTER-IP    EXTERNAL-IP  PORT(S)    AGE
+unhinged-mink-mongodb  10.0.251.238  <none>       27017/TCP  0s
+
+==> extensions/v1beta1/Deployment
+NAME                   DESIRED  CURRENT  UP-TO-DATE  AVAILABLE  AGE
+unhinged-mink-mongodb  1        1        1           0          0s
+
+
+NOTES:
+MongoDB can be accessed via port 27017 on the following DNS name from within your cluster:
+unhinged-mink-mongodb.common.svc.cluster.local
+
+To connect to your database run the following command:
+
+   kubectl run unhinged-mink-mongodb-client --rm --tty -i --image bitnami/mongodb --command -- mongo --host unhinged-mink-mongodb
+
+
+
+******************* (HELM) Install RedMine *******************
+
+yoterada@k8s-master:~$ helm install stable/redmine --name redmine  --namespace common
+NAME:   redmine
+LAST DEPLOYED: Sat May  6 10:05:22 2017
+NAMESPACE: common
+STATUS: DEPLOYED
+
+RESOURCES:
+==> v1/Secret
+NAME             TYPE    DATA  AGE
+redmine-mariadb  Opaque  2     2s
+redmine-redmine  Opaque  2     2s
+
+==> v1/ConfigMap
+NAME             DATA  AGE
+redmine-mariadb  1     2s
+
+==> v1/PersistentVolumeClaim
+NAME             STATUS   VOLUME  CAPACITY  ACCESSMODES  AGE
+redmine-mariadb  Pending  2s
+redmine-redmine  Pending  2s
+
+==> v1/Service
+NAME             CLUSTER-IP   EXTERNAL-IP  PORT(S)       AGE
+redmine-redmine  10.0.161.46  <pending>    80:31263/TCP  1s
+redmine-mariadb  10.0.135.44  <none>       3306/TCP      1s
+
+==> extensions/v1beta1/Deployment
+NAME             DESIRED  CURRENT  UP-TO-DATE  AVAILABLE  AGE
+redmine-redmine  1        1        1           0          1s
+redmine-mariadb  1        1        1           0          1s
+
+
+NOTES:
+1. Get the Redmine URL by running:
+
+  NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+        Watch the status with: 'kubectl get svc --namespace common -w redmine-redmine'
+
+
+  export SERVICE_IP=$(kubectl get svc redmine-redmine --namespace common --template "{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}")
+  echo http://$SERVICE_IP/
+
+2. Login with the following credentials
+
+  echo Username: user
+  echo Password: $(kubectl get secret --namespace common redmine-redmine -o jsonpath="{.data.redmine-password}" | base64 --decode)
+
+yoterada@k8s-master:~$ kubectl get secret --namespace common redmine-redmine -o jsonpath="{.data.redmine-password}" | base64 --decode
+4AkWN2DySI
+
+******************* (Kubernates) Install VAMP *******************
+
+yoterada@k8s-master$ curl -s https://raw.githubusercontent.com/magneticio/vamp.io/master/static/res/v0.9.4/vamp_kube_quickstart.sh | bash
+
+
+╦  ╦╔═╗╔╦╗╔═╗  ╦╔═╦ ╦╔╗ ╔═╗╦═╗╔╗╔╔═╗╔╦╗╔═╗╔═╗  ╔═╗ ╦ ╦╦╔═╗╦╔═  ╔═╗╔╦╗╔═╗╦═╗╔╦╗
+╚╗╔╝╠═╣║║║╠═╝  ╠╩╗║ ║╠╩╗║╣ ╠╦╝║║║║╣  ║ ║╣ ╚═╗  ║═╬╗║ ║║║  ╠╩╗  ╚═╗ ║ ╠═╣╠╦╝ ║
+ ╚╝ ╩ ╩╩ ╩╩    ╩ ╩╚═╝╚═╝╚═╝╩╚═╝╚╝╚═╝ ╩ ╚═╝╚═╝  ╚═╝╚╚═╝╩╚═╝╩ ╩  ╚═╝ ╩ ╩ ╩╩╚═ ╩
+
+namespace           : default
+vga file            : https://raw.githubusercontent.com/magneticio/vamp.io/master/static/res/v0.9.4/vga.yml
+etcd file           : https://raw.githubusercontent.com/magneticio/vamp.io/master/static/res/v0.9.4/etcd.yml
+Elasticsearch image : elasticsearch:2.4.4
+Kibana image        : kibana:4.6.4
+Vamp image          : magneticio/vamp:0.9.4-kubernetes
+
+[STEP] Verifying kubectl install
+[OK] Using namespace: default
+[STEP] Creating https://raw.githubusercontent.com/magneticio/vamp.io/master/static/res/v0.9.4/etcd.yml in namespace default
+[OK] https://raw.githubusercontent.com/magneticio/vamp.io/master/static/res/v0.9.4/etcd.yml created successfully
+[STEP] Creating https://raw.githubusercontent.com/magneticio/vamp.io/master/static/res/v0.9.4/vga.yml in namespace default
+[OK] https://raw.githubusercontent.com/magneticio/vamp.io/master/static/res/v0.9.4/vga.yml created successfully
+[STEP] Running elasticsearch (elasticsearch:2.4.4)
+[OK] elasticsearch is running
+[STEP] Running kibana (kibana:4.6.4)
+[OK] kibana is running
+[STEP] Exposing port 9200/TCP(elasticsearch) for deployment elasticsearch with type ClusterIP
+[STEP] Exposing port 5601/TCP(kibana) for deployment kibana with type ClusterIP
+[STEP] Running vamp (magneticio/vamp:0.9.4-kubernetes)
+[OK] vamp is running
+[STEP] Exposing port 8080/TCP(vamp) for deployment vamp with type LoadBalancer
+[STEP] Polling kubernetes for external IP of Vamp (this might take a while)...
+[STEP] Still polling for Vamp IP...
+[STEP] Still polling for Vamp IP...
+[STEP] Still polling for Vamp IP...
+[STEP] Still polling for Vamp IP...
+[STEP] Still polling for Vamp IP...
+[STEP] Still polling for Vamp IP...
+[OK] Quickstart finished, Vamp is running on http://52.175.156.94:8080
+yoterada@k8s-master-491D5C0D-0:~/VAMP$ 
+yoterada@k8s-master-491D5C0D-0:~/VAMP$ 
+
+
+******************* (Kubernates) gogs Git Server *******************
+
+
+yoterada@k8s-master$ helm install --name gogs-git incubator/gogs
+NAME:   gogs-git
+LAST DEPLOYED: Thu May 11 11:47:19 2017
+NAMESPACE: default
+STATUS: DEPLOYED
+
+RESOURCES:
+==> v1/Secret
+NAME                 TYPE    DATA  AGE
+gogs-git-gogs        Opaque  1     2s
+gogs-git-postgresql  Opaque  1     2s
+
+==> v1/ConfigMap
+NAME                   DATA  AGE
+tcp-gogs-git-gogs-ssh  1     2s
+gogs-git-gogs-config   1     2s
+
+==> v1/PersistentVolumeClaim
+NAME                 STATUS   VOLUME  CAPACITY  ACCESSMODES  AGE
+gogs-git-postgresql  Pending  2s
+gogs-git-gogs        Pending  2s
+
+==> v1/Service
+NAME                 CLUSTER-IP   EXTERNAL-IP  PORT(S)                    AGE
+gogs-git-gogs        10.0.36.249  <nodes>      80:32677/TCP,22:30575/TCP  2s
+gogs-git-postgresql  10.0.42.115  <none>       5432/TCP                   2s
+
+==> extensions/v1beta1/Deployment
+NAME                 DESIRED  CURRENT  UP-TO-DATE  AVAILABLE  AGE
+gogs-git-postgresql  1        1        1           0          2s
+gogs-git-gogs        1        1        1           0          1s
+
+
+NOTES:
+1. Get the Gogs URL by running:
+
+  export NODE_PORT=$(kubectl get --namespace default -o jsonpath="{.spec.ports[0].nodePort}" services gogs-git-gogs)
+  export NODE_IP=$(kubectl get nodes --namespace default -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo http://$NODE_IP:$NODE_PORT/
+
+2. Register a user.  The first user registered will be the administrator.
+
+
+
+yoterada@k8s-master-491D5C0D-0:~$ kubectl get --namespace default -o jsonpath="{.spec.ports[0].nodePort}" services gogs-git-gogs
+32677
+
+yoterada@k8s-master-491D5C0D-0:~$ kubectl get nodes --namespace default -o jsonpath="{.items[0].status.addresses[0].address}"
+10.240.0.6
+
+
+******************* (HELM) Install Sensu (Monitoring) *******************
+
+yoterada@k8s-master:~$ helm install stable/sensu --namespace common
+NAME:   insipid-pika
+LAST DEPLOYED: Mon May  8 10:47:53 2017
+NAMESPACE: common
+STATUS: DEPLOYED
+
+RESOURCES:
+==> v1/Secret
+NAME                TYPE    DATA  AGE
+insipid-pika-redis  Opaque  1     1s
+
+==> v1/Service
+NAME                CLUSTER-IP    EXTERNAL-IP  PORT(S)   AGE
+insipid-pika-redis  10.0.179.228  <none>       6379/TCP  1s
+insipid-pika-sensu  10.0.50.243   <none>       4567/TCP  1s
+
+==> extensions/v1beta1/Deployment
+NAME                DESIRED  CURRENT  UP-TO-DATE  AVAILABLE  AGE
+insipid-pika-sensu  1        1        1           0          1s
+insipid-pika-redis  1        1        1           0          1s
+
+
+NOTES:
+Getting Started:
+
+
+1. Get the Sensu API URL to visit by running these commands in the same shell:
+  echo 'API endpoints docs at https://sensuapp.org/docs/0.24/api/health-and-info-api.html'
+  export POD_NAME=$(kubectl get pods --namespace common -l "app=insipid-pika-sensu" -o jsonpath="{.items[0].metadata.name}")
+  echo http://127.0.0.1:4567/info
+  kubectl port-forward $POD_NAME 4567:4567
+
+
+
+
+yoterada@k8s-master:~$ kubectl get pods --namespace common -l "app=insipid-pika-sensu" -o jsonpath="{.items[0].metadata.name}"
+insipid-pika-sensu-816196818-5nhp1
+
+
+yoterada@k8s-master:~$ kubectl port-forward insipid-pika-sensu-816196818-5nhp1 --namespace common 4567:4567 &
+Forwarding from 127.0.0.1:4567 -> 4567
+Forwarding from [::1]:4567 -> 4567
+
+
+******************* (HELM) Install Uchiwa (Monitoring)*******************
+
+
+yoterada@k8s-master:~$ helm install stable/uchiwa --namespace common
+NAME:   imprecise-olm
+LAST DEPLOYED: Mon May  8 10:48:53 2017
+NAMESPACE: common
+STATUS: DEPLOYED
+
+RESOURCES:
+==> v1/Secret
+NAME                 TYPE    DATA  AGE
+imprecise-olm-redis  Opaque  1     1s
+
+==> v1/Service
+NAME                  CLUSTER-IP    EXTERNAL-IP  PORT(S)   AGE
+imprecise-olm-sensu   10.0.166.28   <none>       4567/TCP  1s
+imprecise-olm-uchiwa  10.0.135.154  <none>       80/TCP    1s
+imprecise-olm-redis   10.0.139.211  <none>       6379/TCP  1s
+
+==> extensions/v1beta1/Deployment
+NAME                  DESIRED  CURRENT  UP-TO-DATE  AVAILABLE  AGE
+imprecise-olm-uchiwa  1        1        1           0          1s
+imprecise-olm-redis   1        1        1           0          1s
+imprecise-olm-sensu   1        1        1           0          1s
+
+
+NOTES:
+
+1. Get the Uchiwa URL to visit by running these commands in the same shell:
+  export POD_NAME=$(kubectl get pods --namespace common -l "app=imprecise-olm-uchiwa" -o jsonpath="{.items[0].metadata.name}")
+  echo http://127.0.0.1:3000
+  kubectl port-forward $POD_NAME 3000:3000
+
+yoterada@k8s-master:~$ 
+
+
+yoterada@k8s-master:~$ kubectl get pods --namespace common -l "app=imprecise-olm-uchiwa" -o jsonpath="{.items[0].metadata.name}"
+imprecise-olm-uchiwa-4069087097-0n2b4
+
+yoterada@k8s-master:~$ kubectl port-forward imprecise-olm-uchiwa-4069087097-0n2b4 --namespace common 3000:3000
+Forwarding from 127.0.0.1:3000 -> 3000
+Forwarding from [::1]:3000 -> 3000
+
+******************* (HELM) Add additional repository (Fabric 8) *******************
+
+yoterada@k8s-master:~$ helm repo add fabric8 https://fabric8.io/helm
+yoterada@k8s-master:~$ helm repo list
+NAME   	URL                                             
+stable 	https://kubernetes-charts.storage.googleapis.com
+local  	http://127.0.0.1:8879/charts                    
+deis   	https://charts.deis.com/workflow                
+fabric8	https://fabric8.io/helm 
+
+******************* (HELM) Install Netflix OSS Turbine & Hystrix (Fabric 8) *******************
+
+yoterada@k8s-master:~$ helm install fabric8/turbine-server
+
+yoterada@k8s-master:~$ helm install fabric8/hystrix-dashboard
+
+Access to the Hystrix Dashboard
+http://52.175.152.184/monitor/monitor.html?stream=http%3A%2F%2F52.175.154.57%2Fturbine.stream
+
