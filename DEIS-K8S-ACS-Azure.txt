@@ -870,7 +870,7 @@ $ ssh -fNL 9090:localhost:9090 yoterada@yoshio3mgmt.japanwest.cloudapp.azure.com
 Access to Following URL
 http://localhost:9090/
 
-******************* Deploy Application by using Buildpacks (Preparation) *******************
+******************* Deploy Application by using Dockerfile (Preparation) *******************
 
 https://deis.com/docs/workflow/applications/using-dockerfiles/
 
@@ -942,7 +942,7 @@ After doing this, you may fix the identity used for this commit with:
  create mode 100644 src/main/webapp/WEB-INF/web.xml
  create mode 100644 src/main/webapp/index.html
 
-******************* Deploy Application by using Buildpacks *******************
+******************* Deploy Application by using Dockerfile *******************
 
 yoterada@k8s-master:~/java-bot/Java-bot-MSA$ deis create
 Creating Application... done, created jicama-waterbed
@@ -1017,6 +1017,32 @@ To ssh://git@deis-builder.000.111.222.333.nip.io:2222/jicama-waterbed.git
 yoterada@k8s-master:~/java-bot/Java-bot-MSA$ deis ps
 === lonely-jokester Processes
 --- cmd:
+
+
+******************* Deploy App from Docker Image on Private Registry *******************
+
+アプリケーションの作成
+$ deis create face-from-private --no-remote
+
+アプリケーションのポート番号設定
+$ deis config:set PORT=8080 -a face-from-private
+Creating config... done
+
+=== face-from-private Config
+PORT      8080
+
+アプリケーションに対するプライベートレポジトリの接続ユーザ名・パスワード設定
+$ deis registry:set username=yoshio password=“*****=*****/********************”  -a face-from-private
+Applying registry information... done
+
+=== face-from-private Registry
+password     *****=*****/********************
+username     yoshio
+
+プライベート Docker レジストリからイメージを pull
+$ deis pull yoshio.azurecr.io/tyoshio2002/facedetect:1.0 -a face-from-private
+Creating build... done
+
 
 ******************* Scale up & down the  Application *******************
 yoterada@k8s-master:~/java-bot/Java-bot-MSA$ deis scale cmd=4 -a lonely-jokester
