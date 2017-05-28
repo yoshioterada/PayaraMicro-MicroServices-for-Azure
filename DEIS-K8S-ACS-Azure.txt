@@ -1,3 +1,7 @@
+現在、下記の URL に移行中です。
+Now I'm migrating this document to following URL.
+https://github.com/yoshioterada/DEIS-k8s-ACS
+
 
 Azure で Docker Registry の作成
 
